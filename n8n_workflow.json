@@ -1,0 +1,311 @@
+{
+  "name": "Dashboard Backend - WTS API (Final Fix)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "2aef50ee-e8b7-4ba3-9969-3de11d7a7e87",
+      "name": "Limit Flow 1",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        496
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "07216927-0d01-4040-8eb0-07ca182dfb6b",
+      "name": "Limit Flow 2",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        272,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = {};\n\n// 1. PIPELINE (Colunas/Fases)\ntry {\n  // Nome do nó corrigido: 'Get Pipeline Structure'\n  const pipelineNode = $('Get Pipeline Structure');\n  \n  if (pipelineNode && pipelineNode.first()) {\n    // Pega o JSON do primeiro item (estrutura do painel)\n    const pipelineData = pipelineNode.first().json;\n    \n    // Copia steps, tags, etc para o resultado\n    Object.assign(result, pipelineData);\n  }\n} catch (error) {\n  // Erro silencioso para não parar o fluxo, mas o pipeline ficará vazio\n}\n\n// 2. CARDS (Cartões do CRM)\nresult.cards = [];\ntry {\n  const cardsNode = $('Get Cards (CRM)1');\n  \n  if (cardsNode) {\n     // .all() pega todos os itens de todas as páginas/execuções\n     const items = cardsNode.all();\n     \n     items.forEach(item => {\n        const data = item.json;\n        // Tratamento robusto: verifica se veio dentro de 'items' ou se já é o item\n        if (data && data.items && Array.isArray(data.items)) {\n             result.cards.push(...data.items);\n        } else if (Array.isArray(data)) {\n             result.cards.push(...data);\n        } else if (data) {\n             // Caso seja um item individual (Split Ativado)\n             result.cards.push(data);\n        }\n     });\n     \n     // Filtro para remover itens vazios ou inválidos\n     result.cards = result.cards.filter(c => c && (c.id || c.monetaryAmount));\n  }\n} catch (error) {}\n\n// 3. CONTACTS (Contatos do Core)\nresult.contacts = [];\ntry {\n  const contactsNode = $('Get All Contacts (Core)1');\n  \n  if (contactsNode) {\n     const items = contactsNode.all();\n     \n     items.forEach(item => {\n        const data = item.json;\n        if (data && data.items && Array.isArray(data.items)) {\n             result.contacts.push(...data.items);\n        } else if (Array.isArray(data)) {\n             result.contacts.push(...data);\n        } else if (data) {\n             result.contacts.push(data);\n        }\n     });\n     \n     // Filtro de validade\n     result.contacts = result.contacts.filter(c => c && (c.id || c.phoneNumber || c.email));\n  }\n} catch (error) {}\n\n// Retorna um único objeto JSON contendo tudo\nreturn { json: result };"
+      },
+      "id": "e44812bf-dbb0-4c8c-a336-e4048d1695f7",
+      "name": "Aggregate Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        496,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "path": "webhook/dashboard-data",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "50396ffd-1d1f-40ce-ae1c-f169b31ef5d5",
+      "name": "Webhook Dashboard4",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -832,
+        496
+      ],
+      "webhookId": "dashboard-data"
+    },
+    {
+      "parameters": {
+        "url": "https://api.wts.chat/crm/v1/panel/card",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "PanelId",
+              "value": "5efab390-77c8-4298-907d-bcbd6811e840"
+            },
+            {
+              "name": "PageSize",
+              "value": "100"
+            },
+            {
+              "name": "IncludeArchived",
+              "value": "false"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "pn_S4Nhr9ooaOVIMCa44L6jbthw8nrX9287yeSfSTcQ"
+            },
+            {
+              "name": "accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c96aa537-3299-4339-b259-ea643213ae9d",
+      "name": "Get Cards (CRM)1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -384,
+        496
+      ],
+      "pagination": {
+        "paginationMode": "addToQueryParameter",
+        "queryParameterName": "PageNumber",
+        "valueInitial": 1,
+        "valueStepSize": 1,
+        "paginationCompleteWhen": "responseBodyFieldIs",
+        "responseBodyFieldName": "items",
+        "responseBodyFieldValue": "[]"
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "https://api.wts.chat/core/v1/contact",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "PageSize",
+              "value": "100"
+            },
+            {
+              "name": "OrderBy",
+              "value": "createdAt"
+            },
+            {
+              "name": "OrderDirection",
+              "value": "DESCENDING"
+            },
+            {
+              "name": "IncludeDetails",
+              "value": "Tags"
+            },
+            {
+              "name": "IncludeDetails",
+              "value": "CustomFields"
+            },
+            {
+              "name": "IncludeDetails",
+              "value": "Portfolios"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "481c6289-88e8-4a5a-a012-1497576c2095",
+      "name": "Get All Contacts (Core)1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        48,
+        496
+      ],
+      "pagination": {
+        "paginationMode": "addToQueryParameter",
+        "queryParameterName": "PageNumber",
+        "valueInitial": 1,
+        "valueStepSize": 1,
+        "paginationCompleteWhen": "responseBodyFieldIs",
+        "responseBodyFieldName": "items",
+        "responseBodyFieldValue": "[]"
+      },
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VKxYk6daiOv7J93i",
+          "name": "WTS Weslei Maringolo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              },
+              {
+                "name": "Access-Control-Allow-Headers",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "id": "98fcb5d9-ab36-4b21-bcba-2fbe1a830c77",
+      "name": "Respond to Dashboard2",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        720,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.wts.chat/crm/v1/panel/5efab390-77c8-4298-907d-bcbd6811e840?IncludeDetails=Tags&IncludeDetails=Steps&IncludeDetails=StepsFields&IncludeDetails=StepsCardCount&IncludeDetails=Cards",
+        "sendQuery": true,
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "pn_S4Nhr9ooaOVIMCa44L6jbthw8nrX9287yeSfSTcQ"
+            },
+            {
+              "name": "accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1fd8cdf4-c38b-461c-abf7-e72a048bc608",
+      "name": "Get Pipeline Structure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -592,
+        496
+      ],
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "Limit Flow 1": {
+      "main": [
+        [
+          {
+            "node": "Get All Contacts (Core)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit Flow 2": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Data": {
+      "main": [
+        [
+          {
+            "node": "Respond to Dashboard2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Dashboard4": {
+      "main": [
+        [
+          {
+            "node": "Get Pipeline Structure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Cards (CRM)1": {
+      "main": [
+        [
+          {
+            "node": "Limit Flow 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get All Contacts (Core)1": {
+      "main": [
+        [
+          {
+            "node": "Limit Flow 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pipeline Structure": {
+      "main": [
+        [
+          {
+            "node": "Get Cards (CRM)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "add39c4053d358672f886bb77cfdad09fe5c8b5756da203aed0b847cf39a3a48"
+  }
+}
