@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect } from 'react';
 import { 
   Briefcase, 
@@ -204,7 +202,7 @@ function App() {
     <div className="min-h-screen bg-[#0a0a0a] text-gray-200 p-3 md:p-6 font-sans selection:bg-gold-500/30 selection:text-gold-200">
       
       {/* Header - Full Width */}
-      <header className="w-full px-2 md:px-4 lg:px-6 mb-8 max-w-[2400px] mx-auto">
+      <header className="w-full px-2 md:px-4 lg:px-6 mb-8">
         <div className="flex flex-col xl:flex-row justify-between items-center xl:items-start gap-6 mb-6">
           <div className="flex flex-col md:flex-row items-center gap-4 text-center md:text-left">
             <img 
@@ -294,7 +292,7 @@ function App() {
       />
 
       {/* Main Content - Full Width */}
-      <main className="w-full px-2 md:px-4 lg:px-6 space-y-6 max-w-[2400px] mx-auto">
+      <main className="w-full px-2 md:px-4 lg:px-6 space-y-6">
         
         {/* VIEW: OVERVIEW */}
         {viewMode === 'overview' && (
