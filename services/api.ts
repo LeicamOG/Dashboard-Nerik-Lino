@@ -1,6 +1,4 @@
-
-
-import { DashboardData, PipelineStage, DateFilterState, TeamMember, ServiceData, CardSimple, CreativeMetrics, TrafficSource, WtsContact, WtsCardItem } from '../types';
+import { DashboardData, PipelineStage, DateFilterState, TeamMember, ServiceData, CardSimple, CreativeMetrics, TrafficSource, WtsContact, WtsCardItem, WtsTag } from '../types';
 
 // ============================================================================
 // CONFIGURAÇÃO DE INTEGRAÇÃO
@@ -84,17 +82,18 @@ const fillMissingDates = (
     const start = new Date(startDateStr);
     const end = new Date(endDateStr);
     
-    // Safety cap to prevent browser freeze if range is huge (e.g. 1970 - 2100)
-    const MAX_DAYS = 2000; // ~5.5 years max rendered on chart
+    // Safety cap to prevent browser freeze
+    const MAX_DAYS = 3650; // Max 10 years
     
     let current = new Date(start);
     let safety = 0;
 
-    // Ensure we don't start before 2020 to prevent garbage data if 1970 is passed
+    // Se a data de início for muito antiga, ajusta para 2023 (início dos dados relevantes)
+    // a menos que estejamos filtrando especificamente um ano anterior.
     if (current.getFullYear() < 2020) {
         current = new Date(2023, 0, 1);
     }
-    // Also clamp end if it's too far in future
+    // Clamp end if it's too far in future
     if (end.getFullYear() > 2030) {
         end.setFullYear(2030);
     }
@@ -158,33 +157,16 @@ const extractAdData = (card: WtsCardItem, contact?: WtsContact): ExtractedAdData
     const result: ExtractedAdData = { name: null, source: 'Orgânico', url: null };
 
     // --- STRATEGY 1: CONTACT UTM (STRICT PRIORITY) ---
-    // User requested strict mapping: 
-    // source -> source
-    // Campaign -> Campaign (campaign name)
-    // referalurl -> referalurl (campaign link)
     if (contact && contact.utm) {
         const u = contact.utm;
         
-        // 1. SOURCE
-        if (u.source) {
-            result.source = u.source;
-        }
-        
-        // 2. CAMPAIGN NAME
-        if (u.Campaign) {
-            result.name = u.Campaign;
-        } else if (u.campaign) {
-            result.name = u.campaign;
-        } else if (u.content) {
-             result.name = u.content;
-        }
+        if (u.source) result.source = u.source;
+        if (u.Campaign) result.name = u.Campaign;
+        else if (u.campaign) result.name = u.campaign;
+        else if (u.content) result.name = u.content;
 
-        // 3. CAMPAIGN URL
-        if (u.referalurl) {
-            result.url = u.referalurl;
-        } else if (u.referralUrl) {
-            result.url = u.referralUrl;
-        }
+        if (u.referalurl) result.url = u.referalurl;
+        else if (u.referralUrl) result.url = u.referralUrl;
 
         if (result.name || result.source !== 'Orgânico') {
             return result;
@@ -258,6 +240,9 @@ const OPERATIONAL_TAGS = new Set([
 // MAIN FETCH
 // ============================================================================
 
+// Mapa global para resolver IDs de tags (importante para o gráfico de serviços)
+let globalTagMap = new Map<string, WtsTag>();
+
 export const fetchConversAppData = async (currentData: DashboardData, dateFilter: DateFilterState): Promise<DashboardData> => {
   try {
     const url = new URL(WTS_BASE_URL);
@@ -283,6 +268,15 @@ export const fetchConversAppData = async (currentData: DashboardData, dateFilter
         rootData = rawJson.length > 0 ? (rawJson[0].json || rawJson[0]) : {};
     } else if (rawJson.json) {
         rootData = rawJson.json;
+    }
+
+    // Populate Tag Map from Root Data - CRITICAL FIX
+    // Isso garante que tenhamos o nome da tag quando o card só traz tagIds
+    if (rootData.tags && Array.isArray(rootData.tags)) {
+        globalTagMap.clear();
+        rootData.tags.forEach((tag: any) => {
+            if (tag.id) globalTagMap.set(tag.id, tag);
+        });
     }
 
     const rawSteps = rootData.steps || [];
@@ -412,8 +406,11 @@ const processMetrics = (currentData: DashboardData, dateFilter: DateFilterState,
     
     let totalRevenue = 0;
     let totalContracts = 0;
+    let totalProposalValue = 0;
 
     // --- DATE RANGE SETUP ---
+    // Usamos datas bem abertas inicialmente para filtrar os cards
+    // MAS, para os gráficos, vamos calcular o range real dos dados
     let filterStartDate: Date;
     let filterEndDate: Date;
     const today = new Date();
@@ -439,8 +436,8 @@ const processMetrics = (currentData: DashboardData, dateFilter: DateFilterState,
         filterEndDate = normalizeDate(today);
     }
 
-    const successKeywords = ['ganho', 'won', 'vendido', 'contrato', 'assinado', 'pagamento', 'fechado', 'concluído', 'sucesso'];
-
+    // Variáveis para detectar o PRIMEIRO e ÚLTIMO dado real encontrado
+    // Isso corrige o bug de "Todo o período" renderizar 50 anos de dados vazios
     let minDataDate = new Date(8640000000000000); 
     let maxDataDate = new Date(-8640000000000000);
     let hasData = false;
@@ -448,18 +445,38 @@ const processMetrics = (currentData: DashboardData, dateFilter: DateFilterState,
     // --- ITERATE PIPELINE ---
     pipeline.forEach(stage => {
         const stageLabelNorm = normalizeStr(stage.label);
-        const isStepSuccess = successKeywords.some(k => stageLabelNorm.includes(k));
         
+        // --- STAGE TYPE DETECTION ---
+        // Detecção explícita de Pagamento Confirmado e Contrato Assinado
+        const isPaymentConfirmed = stageLabelNorm.includes('pagamento') && stageLabelNorm.includes('confirmado');
+        const isContractSigned = stageLabelNorm.includes('contrato') && stageLabelNorm.includes('assinado');
+        
+        // Detecção de Proposta
+        const isProposalStage = stageLabelNorm.includes('proposta') || stageLabelNorm.includes('enviada');
+
         const filteredCards: CardSimple[] = [];
         let stageValue = 0;
 
         stage.cards.forEach((card: any) => {
             const contact = card.fullContact;
+            const status = String(card.status || '').toLowerCase();
             
-            // --- 1. DATE LOGIC ---
+            // --- 1. DETERMINE IF SALE FIRST (Crucial for Date Logic) ---
+            // É venda se: O card estiver marcado como 'won' OU se estiver em etapas de sucesso
+            // independente do status ser 'open', desde que nao seja lost/archived explicitamente em etapa errada
+            let isSale = status === 'won' || status === 'paid' || status === 'ganho';
+            if (!isSale && (isPaymentConfirmed || isContractSigned)) {
+                if (status !== 'lost' && status !== 'perdido' && status !== 'archived') {
+                    isSale = true;
+                }
+            }
+
+            // --- 2. DATE LOGIC (Requested Update) ---
+            // Se for venda (Pagamento confirmado), usamos updatedAt. Se não, createdAt.
             let relevantDateRaw = card.createdAt;
-            if (isStepSuccess) {
-                 relevantDateRaw = card.updatedAt || card.updated_at || card.closedAt || card.date || card.createdAt;
+            if (isSale) {
+                 // Prioriza updated_at para fechamento de contrato
+                 relevantDateRaw = card.updatedAt || card.updated_at || card.dateLastActivity || card.createdAt;
             }
             
             const relevantDate = parseDateSafe(relevantDateRaw);
@@ -470,20 +487,18 @@ const processMetrics = (currentData: DashboardData, dateFilter: DateFilterState,
                 return; 
             }
 
+            // Rastreia o intervalo REAL de dados para os gráficos
             if (normalizedDate < minDataDate) minDataDate = normalizedDate;
             if (normalizedDate > maxDataDate) maxDataDate = normalizedDate;
             hasData = true;
 
             const val = getMonetaryValue(card.monetaryAmount || card.value || card.amount);
-            let isSale = isStepSuccess;
-            const status = String(card.status || '').toLowerCase();
-            if (status === 'won' || status === 'paid' || status === 'ganho') isSale = true;
-
+            
             stageValue += val;
-
             const cardTitle = card.title || (contact ? contact.name : 'Sem Nome');
 
-            // --- 2. METRIC: Daily Leads ---
+            // --- 3. METRIC: Daily Leads ---
+            // Leads sempre contam pela data de criação
             const creationDate = parseDateSafe(card.createdAt);
             const normCreationDate = normalizeDate(creationDate);
             if (normCreationDate >= filterStartDate && normCreationDate <= filterEndDate) {
@@ -491,23 +506,44 @@ const processMetrics = (currentData: DashboardData, dateFilter: DateFilterState,
                 const entry = dailyLeadsMap.get(dayKey) || { value: 0 };
                 entry.value++;
                 dailyLeadsMap.set(dayKey, entry);
+                
+                // Também atualiza min/max date baseado na criação de leads
+                if (normCreationDate < minDataDate) minDataDate = normCreationDate;
+                if (normCreationDate > maxDataDate) maxDataDate = normCreationDate;
             }
 
-            // --- 3. METRIC: Revenue ---
+            // --- 4. METRIC: Revenue / Proposals ---
             if (isSale) {
                 totalRevenue += val;
                 totalContracts++;
-                const saleDayKey = formatDateString(relevantDate);
                 
+                // Agrupa vendas por data de atualização (fechamento)
+                const saleDayKey = formatDateString(relevantDate);
                 const currentEntry = dailyRevenueMap.get(saleDayKey) || { value: 0, breakdown: [] };
                 currentEntry.value += val;
                 currentEntry.breakdown.push({ name: cardTitle, value: val });
                 dailyRevenueMap.set(saleDayKey, currentEntry);
+            } else if (isProposalStage) {
+                totalProposalValue += val;
             }
 
-            // --- 4. METRIC: Services / Tags ---
+            // --- 5. METRIC: Services / Tags (FIXED) ---
             let rawTags: any[] = [];
+            
+            // 1. Tags do Objeto Card
             if (Array.isArray(card.tags)) rawTags = [...card.tags];
+            
+            // 2. Tags por ID (CORREÇÃO CRÍTICA)
+            // Muitos cards vêm apenas com tagIds, precisamos buscar no mapa global
+            if (Array.isArray(card.tagIds)) {
+                card.tagIds.forEach((tid: string) => {
+                    if (globalTagMap.has(tid)) {
+                        rawTags.push(globalTagMap.get(tid));
+                    }
+                });
+            }
+
+            // 3. Tags do Contato
             if (contact && Array.isArray(contact.tags)) rawTags = [...rawTags, ...contact.tags];
 
             const displayTags: {name: string, color: string}[] = [];
@@ -536,9 +572,8 @@ const processMetrics = (currentData: DashboardData, dateFilter: DateFilterState,
                 }
             });
 
-            // --- 5. METRIC: Ads / Creatives / Source ---
+            // --- 6. METRIC: Ads / Creatives / Source ---
             const adData = extractAdData(card, contact);
-            
             if (adData.source) {
                 const sourceName = adData.source.length > 20 ? adData.source.substring(0, 20) + '...' : adData.source;
                 const sourceKey = normalizeStr(sourceName);
@@ -581,7 +616,7 @@ const processMetrics = (currentData: DashboardData, dateFilter: DateFilterState,
                  creativeMap.set(cleanName, current);
             }
 
-            // --- 6. METRIC: Team ---
+            // --- 7. METRIC: Team ---
             const userId = String(card.responsibleUserId || 'unassigned');
             let userName = card.responsibleUser?.name;
             if (USER_ID_MAP[userId]) {
@@ -594,7 +629,7 @@ const processMetrics = (currentData: DashboardData, dateFilter: DateFilterState,
                 teamMap.set(userId, {
                     id: userId,
                     name: userName,
-                    role: 'Vendedor', // Changed from Consultor
+                    role: 'Vendedor', 
                     sales: 0,
                     target: 100000,
                     commission: 0,
@@ -608,6 +643,9 @@ const processMetrics = (currentData: DashboardData, dateFilter: DateFilterState,
                 member.sales += val;
                 member.commission += (val * 0.1); 
                 member.activity.contractsSigned++;
+            }
+            if (isProposalStage) {
+                member.activity.proposalsSent++;
             }
             if (member.activity.leads > 0) {
                  member.activity.conversionRate = Math.round((member.activity.contractsSigned / member.activity.leads) * 100);
@@ -635,6 +673,9 @@ const processMetrics = (currentData: DashboardData, dateFilter: DateFilterState,
 
     // --- FINALIZE CHARTS ---
     
+    // CORREÇÃO CRÍTICA PARA 'TODO O PERÍODO'
+    // Se preset for 'all', usamos o intervalo de dados reais (minDataDate até maxDataDate)
+    // ao invés de usar 1970 até 2100. Isso reduz os pontos do gráfico de milhares para apenas os dias relevantes.
     let chartStart = filterStartDate;
     let chartEnd = filterEndDate;
 
@@ -642,26 +683,38 @@ const processMetrics = (currentData: DashboardData, dateFilter: DateFilterState,
         if (hasData) {
             chartStart = minDataDate;
             chartEnd = maxDataDate;
+            
+            // Safety: se por acaso só tiver um dia, expande um pouco pra ficar bonito no gráfico
+            if (chartStart.getTime() === chartEnd.getTime()) {
+                const tempEnd = new Date(chartEnd);
+                tempEnd.setDate(tempEnd.getDate() + 1);
+                chartEnd = tempEnd;
+            }
         } else {
-            chartStart = new Date();
+            // Se não tiver dados, mostra range do mês atual
+            const d = new Date();
+            d.setDate(1);
+            chartStart = d;
             chartEnd = new Date();
         }
     }
 
+    // Double check sanity
     if (chartStart.getFullYear() < 2000) chartStart = new Date(2023, 0, 1);
+    if (chartEnd > new Date()) chartEnd = new Date(); // Don't project too far into future
 
     const chartDays = fillMissingDates(dailyRevenueMap, formatDateString(chartStart), formatDateString(chartEnd));
     const finalDailyRevenue = chartDays.map(d => ({
-        day: d.date.split('-')[2],
+        day: d.date.split('-')[2] + '/' + d.date.split('-')[1], // DD/MM for better XAxis
         fullDate: d.date,
         meta: currentData.currentGoals.revenueTarget / 30, 
         realizado: d.value,
-        salesBreakdown: d.breakdown // Pass breakdown to chart
+        salesBreakdown: d.breakdown 
     }));
 
     const leadDays = fillMissingDates(dailyLeadsMap, formatDateString(chartStart), formatDateString(chartEnd));
     const finalDailyLeads = leadDays.map(d => ({
-        day: d.date.split('-')[2],
+        day: d.date.split('-')[2] + '/' + d.date.split('-')[1], // DD/MM
         count: d.value
     }));
 
@@ -683,7 +736,8 @@ const processMetrics = (currentData: DashboardData, dateFilter: DateFilterState,
             totalRevenue,
             totalContracts,
             totalCashFlow: totalRevenue, 
-            totalCommission: totalRevenue * 0.1 
+            totalCommission: totalRevenue * 0.1,
+            totalProposalValue 
         },
         charts: {
             dailyRevenue: finalDailyRevenue,

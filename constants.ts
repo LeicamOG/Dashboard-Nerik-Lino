@@ -1,4 +1,5 @@
 
+
 import { DashboardData } from './types';
 
 export const MOCK_DASHBOARD_DATA: DashboardData = {
@@ -12,7 +13,8 @@ export const MOCK_DASHBOARD_DATA: DashboardData = {
     totalRevenue: 150000,
     totalCashFlow: 45000,
     totalContracts: 20, // Updated to match "CONTRATO ASSINADO" in pipeline
-    totalCommission: 14650
+    totalCommission: 14650,
+    totalProposalValue: 65000 // Valor em aberto de propostas
   },
   charts: {
     dailyRevenue: [

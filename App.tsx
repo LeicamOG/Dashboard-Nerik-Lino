@@ -17,7 +17,8 @@ import {
   List,
   Columns,
   TrendingUp,
-  UserPlus
+  UserPlus,
+  FileText
 } from 'lucide-react';
 import { 
   ComposedChart, 
@@ -318,7 +319,7 @@ function App() {
             </div>
 
             {/* Row 1: KPI Cards with Goal Context */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 animate-fadeIn">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4 animate-fadeIn">
               
               {/* KPI 1: Contratos Fechados */}
               <Card className="relative overflow-hidden group">
@@ -392,8 +393,28 @@ function App() {
                  </div>
               </Card>
 
-              {/* KPI 4: Comissões (Cost) */}
-               <Card className="relative overflow-hidden group">
+              {/* KPI 4: Valores em Aberto (Propostas) */}
+               <Card className="relative overflow-hidden group bg-neutral-900/50 border-neutral-700">
+                 <div className="flex justify-between items-start mb-2">
+                    <div>
+                        <p className="text-[10px] text-gray-400 uppercase tracking-widest font-semibold">Em Negociação</p>
+                        <h3 className="text-2xl font-bold text-gray-200 mt-1">
+                             {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(data.metrics.totalProposalValue)}
+                        </h3>
+                    </div>
+                    <div className="p-2 bg-neutral-800 rounded-lg text-gray-400 group-hover:text-white transition-colors">
+                        <FileText size={20} />
+                    </div>
+                 </div>
+                 <div className="mt-auto pt-4">
+                    <p className="text-[10px] text-gray-500">Propostas e Orçamentos enviados.</p>
+                 </div>
+                 {/* Decorative Line */}
+                 <div className="absolute bottom-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-gray-500/30 to-transparent" />
+              </Card>
+
+              {/* KPI 5: Comissões (Cost) */}
+               <Card className="relative overflow-hidden group lg:hidden xl:block">
                  <div className="flex justify-between items-start mb-2">
                     <div>
                         <p className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold">Comissões (Prov.)</p>
@@ -406,7 +427,7 @@ function App() {
                     </div>
                  </div>
                  <div className="mt-auto pt-4">
-                    <p className="text-xs text-gray-500">Baseado em 10% dos honorários fechados no período.</p>
+                    <p className="text-[10px] text-gray-500">Baseado em 10%.</p>
                  </div>
               </Card>
             </div>
@@ -443,7 +464,7 @@ function App() {
               <Card title="Novos Leads (Criação)">
                 <div className="h-64 mt-4 min-w-[300px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={data.charts.dailyLeads}>
+                    <AreaChart data={data.charts.dailyLeads} margin={{ left: -20, right: 10 }}>
                       <defs>
                         <linearGradient id="colorLeads" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#C59D5F" stopOpacity={0.3}/>
@@ -457,6 +478,7 @@ function App() {
                         tick={{fill: '#666', fontSize: 10}} 
                         axisLine={false}
                         tickLine={false}
+                        interval="preserveStartEnd"
                       />
                       <YAxis 
                         stroke="#666" 
@@ -464,8 +486,12 @@ function App() {
                         axisLine={false}
                         tickLine={false}
                       />
-                      <Tooltip content={<CustomTooltip />} />
-                      <Area type="monotone" dataKey="count" name="Novos Leads" stroke="#C59D5F" fillOpacity={1} fill="url(#colorLeads)" />
+                      <Tooltip 
+                        content={<CustomTooltip />} 
+                        isAnimationActive={false} 
+                        cursor={{ stroke: '#C59D5F', strokeWidth: 1 }} 
+                      />
+                      <Area type="monotone" dataKey="count" name="Novos Leads" stroke="#C59D5F" fillOpacity={1} fill="url(#colorLeads)" activeDot={{ r: 6 }} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>

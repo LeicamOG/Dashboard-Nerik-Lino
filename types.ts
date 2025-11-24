@@ -111,6 +111,7 @@ export interface DashboardData {
     totalCashFlow: number; // Entradas
     totalContracts: number; // Qtd Contratos
     totalCommission: number; // Comissões Provisionadas
+    totalProposalValue: number; // Valores em Aberto (Propostas Enviadas)
   };
   charts: {
     dailyRevenue: DailyPerformance[];
