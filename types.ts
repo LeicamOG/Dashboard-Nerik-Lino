@@ -1,5 +1,6 @@
 
 
+
 export interface DailyPerformance {
   day: string; // DD/MM
   fullDate: string; // YYYY-MM-DD para ordenação
@@ -158,6 +159,7 @@ export interface WtsContact {
   customFields?: { id: string; name?: string; value: any }[] | Record<string, any>; 
   tags?: WtsTag[] | string[];
   utm?: WtsUtm;
+  origin?: string;
 }
 
 export interface WtsCardItem {
