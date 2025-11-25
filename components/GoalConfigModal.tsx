@@ -1,6 +1,7 @@
 
+
 import React, { useState, useEffect } from 'react';
-import { X, Save, Target } from 'lucide-react';
+import { X, Save, Target, Calendar } from 'lucide-react';
 import { GoalSettings } from '../types';
 
 interface GoalConfigModalProps {
@@ -80,19 +81,37 @@ export const GoalConfigModal: React.FC<GoalConfigModalProps> = ({
             <p className="text-[10px] text-gray-500 mt-1">Valor efetivamente recebido (Pagamentos iniciais/Parcelas).</p>
           </div>
 
-          {/* Contracts Quantity Target */}
-          <div>
-            <label className="block text-xs uppercase text-gray-500 font-semibold mb-2">
-              Meta de Quantidade de Contratos
-            </label>
-            <div className="relative">
-              <input
-                type="number"
-                value={formData.contractsTarget}
-                onChange={(e) => setFormData({...formData, contractsTarget: Number(e.target.value)})}
-                className="w-full bg-neutral-800 border border-neutral-700 rounded-lg py-3 px-4 text-white focus:border-gold-500 focus:outline-none transition-colors"
-                placeholder="0"
-              />
+          <div className="grid grid-cols-2 gap-4">
+             {/* Contracts Quantity Target */}
+            <div>
+                <label className="block text-xs uppercase text-gray-500 font-semibold mb-2">
+                Qtd. Contratos
+                </label>
+                <div className="relative">
+                <input
+                    type="number"
+                    value={formData.contractsTarget}
+                    onChange={(e) => setFormData({...formData, contractsTarget: Number(e.target.value)})}
+                    className="w-full bg-neutral-800 border border-neutral-700 rounded-lg py-3 px-4 text-white focus:border-gold-500 focus:outline-none transition-colors"
+                    placeholder="0"
+                />
+                </div>
+            </div>
+
+            {/* Deadline */}
+            <div>
+                <label className="block text-xs uppercase text-gray-500 font-semibold mb-2">
+                Data Limite
+                </label>
+                <div className="relative">
+                <input
+                    type="date"
+                    value={formData.deadline || ''}
+                    onChange={(e) => setFormData({...formData, deadline: e.target.value})}
+                    className="w-full bg-neutral-800 border border-neutral-700 rounded-lg py-3 px-4 text-white focus:border-gold-500 focus:outline-none transition-colors"
+                    style={{ colorScheme: 'dark' }}
+                />
+                </div>
             </div>
           </div>
 

@@ -1,5 +1,4 @@
 
-
 import { DashboardData } from './types';
 
 export const MOCK_DASHBOARD_DATA: DashboardData = {
@@ -13,6 +12,7 @@ export const MOCK_DASHBOARD_DATA: DashboardData = {
     totalRevenue: 150000,
     totalCashFlow: 45000,
     totalContracts: 20, // Updated to match "CONTRATO ASSINADO" in pipeline
+    totalMeetings: 15,
     totalCommission: 14650,
     totalProposalValue: 65000 // Valor em aberto de propostas
   },
@@ -77,11 +77,15 @@ export const MOCK_DASHBOARD_DATA: DashboardData = {
     }
   ],
   pipeline: [
-    { id: 'base', label: 'BASE', count: 25, total: 100, color: '#0ea5e9', cards: [] }, 
-    { id: 'qual', label: 'QUALIFICADO', count: 35, total: 100, color: '#84cc16', cards: [] }, 
-    { id: 'disqual', label: 'DESQUALIFICADO', count: 38, total: 100, color: '#ef4444', cards: [] }, 
-    { id: 'follow', label: 'FOLLOW-UP', count: 31, total: 100, color: '#fed7aa', cards: [] }, 
+    { id: 'base', label: 'BASE (Entrada Inicial)', count: 25, total: 100, color: '#0ea5e9', cards: [] }, 
+    { id: 'qual', label: 'QUALIFICADO (Lead com potencial)', count: 35, total: 100, color: '#84cc16', cards: [] }, 
+    { id: 'disqual', label: 'DESQUALIFICADO (Lead sem potencial)', count: 38, total: 100, color: '#ef4444', cards: [] }, 
+    { id: 'follow', label: 'FOLLOW-UP (Em acompanhamento)', count: 31, total: 100, color: '#fed7aa', cards: [] }, 
     { id: 'meeting', label: 'REUNIÃO AGENDADA', count: 19, total: 100, color: '#eab308', cards: [] }, 
+    { id: 'noshow', label: 'NO-SHOW (Não compareceu)', count: 5, total: 100, color: '#78350f', cards: [] },
+    { id: 'recup', label: 'RECUPERAÇÃO (Nova tentativa)', count: 12, total: 100, color: '#f59e0b', cards: [] },
+    { id: 'prop', label: 'PROPOSTA ENVIADA', count: 15, total: 100, color: '#8b5cf6', cards: [] },
+    { id: 'desist', label: 'DESISTIU DE SEGUIR', count: 8, total: 100, color: '#991b1b', cards: [] },
     { id: 'contract', label: 'CONTRATO ASSINADO', count: 20, total: 100, color: '#db2777', cards: [] }, 
     { id: 'payment', label: 'PAGAMENTO CONFIRMADO', count: 23, total: 100, color: '#16a34a', cards: [] }, 
   ],

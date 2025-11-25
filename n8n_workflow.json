@@ -1,56 +1,74 @@
 {
-  "name": "Dashboard Backend - WTS API (Final Fix)",
+  "name": "Dashboard Backend - WTS Full Loop Fix",
   "nodes": [
-    {
-      "parameters": {},
-      "id": "2aef50ee-e8b7-4ba3-9969-3de11d7a7e87",
-      "name": "Limit Flow 1",
-      "type": "n8n-nodes-base.limit",
-      "typeVersion": 1,
-      "position": [
-        -160,
-        496
-      ]
-    },
-    {
-      "parameters": {},
-      "id": "07216927-0d01-4040-8eb0-07ca182dfb6b",
-      "name": "Limit Flow 2",
-      "type": "n8n-nodes-base.limit",
-      "typeVersion": 1,
-      "position": [
-        272,
-        496
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const result = {};\n\n// 1. PIPELINE (Colunas/Fases)\ntry {\n  // Nome do nó corrigido: 'Get Pipeline Structure'\n  const pipelineNode = $('Get Pipeline Structure');\n  \n  if (pipelineNode && pipelineNode.first()) {\n    // Pega o JSON do primeiro item (estrutura do painel)\n    const pipelineData = pipelineNode.first().json;\n    \n    // Copia steps, tags, etc para o resultado\n    Object.assign(result, pipelineData);\n  }\n} catch (error) {\n  // Erro silencioso para não parar o fluxo, mas o pipeline ficará vazio\n}\n\n// 2. CARDS (Cartões do CRM)\nresult.cards = [];\ntry {\n  const cardsNode = $('Get Cards (CRM)1');\n  \n  if (cardsNode) {\n     // .all() pega todos os itens de todas as páginas/execuções\n     const items = cardsNode.all();\n     \n     items.forEach(item => {\n        const data = item.json;\n        // Tratamento robusto: verifica se veio dentro de 'items' ou se já é o item\n        if (data && data.items && Array.isArray(data.items)) {\n             result.cards.push(...data.items);\n        } else if (Array.isArray(data)) {\n             result.cards.push(...data);\n        } else if (data) {\n             // Caso seja um item individual (Split Ativado)\n             result.cards.push(data);\n        }\n     });\n     \n     // Filtro para remover itens vazios ou inválidos\n     result.cards = result.cards.filter(c => c && (c.id || c.monetaryAmount));\n  }\n} catch (error) {}\n\n// 3. CONTACTS (Contatos do Core)\nresult.contacts = [];\ntry {\n  const contactsNode = $('Get All Contacts (Core)1');\n  \n  if (contactsNode) {\n     const items = contactsNode.all();\n     \n     items.forEach(item => {\n        const data = item.json;\n        if (data && data.items && Array.isArray(data.items)) {\n             result.contacts.push(...data.items);\n        } else if (Array.isArray(data)) {\n             result.contacts.push(...data);\n        } else if (data) {\n             result.contacts.push(data);\n        }\n     });\n     \n     // Filtro de validade\n     result.contacts = result.contacts.filter(c => c && (c.id || c.phoneNumber || c.email));\n  }\n} catch (error) {}\n\n// Retorna um único objeto JSON contendo tudo\nreturn { json: result };"
-      },
-      "id": "e44812bf-dbb0-4c8c-a336-e4048d1695f7",
-      "name": "Aggregate Data",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 1,
-      "position": [
-        496,
-        496
-      ]
-    },
     {
       "parameters": {
         "path": "webhook/dashboard-data",
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "50396ffd-1d1f-40ce-ae1c-f169b31ef5d5",
-      "name": "Webhook Dashboard4",
+      "id": "8586d611-8a74-4cb8-bce7-294417a60cf3",
+      "name": "Webhook Dashboard V2",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [
-        -832,
-        496
+        -2032,
+        5776
       ],
-      "webhookId": "dashboard-data"
+      "webhookId": "c5d98823-e432-4285-a5d1-6451e97821ed"
+    },
+    {
+      "parameters": {
+        "url": "https://api.wts.chat/crm/v1/panel/5efab390-77c8-4298-907d-bcbd6811e840?IncludeDetails=Tags&IncludeDetails=Steps&IncludeDetails=StepsFields&IncludeDetails=StepsCardCount",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "pn_S4Nhr9ooaOVIMCa44L6jbthw8nrX9287yeSfSTcQ"
+            },
+            {
+              "name": "accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3b4016db-2706-4715-8c02-e06f2b98fc8d",
+      "name": "Get Pipeline Structure V2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -1840,
+        5776
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// GERADOR DE PÁGINAS\n// Defina um limite seguro. O loop vai tentar rodar todas.\nconst maxPages = 30; \nconst pages = [];\n\nfor (let i = 1; i <= maxPages; i++) {\n  pages.push({ json: { pageNumber: i } });\n}\n\nreturn pages;"
+      },
+      "id": "489e062d-46f1-4d33-bd51-e70f66a9eb22",
+      "name": "Generate Pages1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        -1632,
+        5776
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -1424,
+        5776
+      ],
+      "id": "84b161b9-2ad4-49f9-8179-822f3f8f8a73",
+      "name": "Loop Over Pages V"
     },
     {
       "parameters": {
@@ -67,8 +85,28 @@
               "value": "100"
             },
             {
+              "name": "PageNumber",
+              "value": "={{ $json.pageNumber }}"
+            },
+            {
               "name": "IncludeArchived",
-              "value": "false"
+              "value": "true"
+            },
+            {
+              "name": "IncludeDetails",
+              "value": "Contacts"
+            },
+            {
+              "name": "IncludeDetails",
+              "value": "CustomFields"
+            },
+            {
+              "name": "OrderDirection",
+              "value": "DESCENDING"
+            },
+            {
+              "name": "OrderBy",
+              "value": "createdAt"
             }
           ]
         },
@@ -87,85 +125,28 @@
         },
         "options": {}
       },
-      "id": "c96aa537-3299-4339-b259-ea643213ae9d",
-      "name": "Get Cards (CRM)1",
+      "id": "c3ada15a-b9a9-4955-a506-b64bda67fcb1",
+      "name": "Get Single Page V4",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        -384,
-        496
+        -1136,
+        5568
       ],
-      "pagination": {
-        "paginationMode": "addToQueryParameter",
-        "queryParameterName": "PageNumber",
-        "valueInitial": 1,
-        "valueStepSize": 1,
-        "paginationCompleteWhen": "responseBodyFieldIs",
-        "responseBodyFieldName": "items",
-        "responseBodyFieldValue": "[]"
-      },
-      "alwaysOutputData": true
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
-        "url": "https://api.wts.chat/core/v1/contact",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendQuery": true,
-        "queryParameters": {
-          "parameters": [
-            {
-              "name": "PageSize",
-              "value": "100"
-            },
-            {
-              "name": "OrderBy",
-              "value": "createdAt"
-            },
-            {
-              "name": "OrderDirection",
-              "value": "DESCENDING"
-            },
-            {
-              "name": "IncludeDetails",
-              "value": "Tags"
-            },
-            {
-              "name": "IncludeDetails",
-              "value": "CustomFields"
-            },
-            {
-              "name": "IncludeDetails",
-              "value": "Portfolios"
-            }
-          ]
-        },
-        "options": {}
+        "jsCode": "// NOME EXATO do nó HTTP do Loop\nconst nodeName = 'Loop Over Pages V';\n// NOME EXATO do nó que pega a estrutura (Colunas/Tags)\nconst structureNodeName = 'Get Pipeline Structure V2';\n\nlet allItems = [];\nlet structureData = {};\n\ntry {\n  // 1. Tenta recuperar a estrutura do Pipeline (Steps e Tags) do nó anterior\n  // Como o 'Get Pipeline Structure V2' é um ancestral, podemos pegá-lo via $(\"...\").first()\n  const structureExec = $(structureNodeName).first();\n  if (structureExec && structureExec.json) {\n      structureData = structureExec.json;\n  }\n\n  // 2. Recupera todos os itens do Loop\n  const allExecutions = $(nodeName).all();\n  for (const execution of allExecutions) {\n    if (execution && execution.json && execution.json.items && Array.isArray(execution.json.items)) {\n        allItems.push(...execution.json.items);\n    }\n  }\n\n} catch (error) {\n  console.log('Erro ao ler histórico: ' + error.message);\n}\n\n// Retorna um objeto combinado: Estrutura (Steps) + Dados (Cards)\nreturn {\n  json: {\n    status: \"success\",\n    // Passa adiante os dados estruturais importantes\n    steps: structureData.steps || [],\n    tags: structureData.tags || [],\n    panelId: structureData.id,\n    title: structureData.title,\n    // Dados acumulados\n    total_records: allItems.length,\n    data: allItems\n  }\n};"
       },
-      "id": "481c6289-88e8-4a5a-a012-1497576c2095",
-      "name": "Get All Contacts (Core)1",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
+      "id": "abb6140f-7313-4625-a808-0102916412cb",
+      "name": "Compile Final Data1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
       "position": [
-        48,
-        496
-      ],
-      "pagination": {
-        "paginationMode": "addToQueryParameter",
-        "queryParameterName": "PageNumber",
-        "valueInitial": 1,
-        "valueStepSize": 1,
-        "paginationCompleteWhen": "responseBodyFieldIs",
-        "responseBodyFieldName": "items",
-        "responseBodyFieldValue": "[]"
-      },
-      "alwaysOutputData": true,
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "VKxYk6daiOv7J93i",
-          "name": "WTS Weslei Maringolo"
-        }
-      }
+        -1184,
+        5936
+      ]
     },
     {
       "parameters": {
@@ -177,126 +158,89 @@
               {
                 "name": "Access-Control-Allow-Origin",
                 "value": "*"
-              },
-              {
-                "name": "Access-Control-Allow-Headers",
-                "value": "*"
               }
             ]
           }
         }
       },
-      "id": "98fcb5d9-ab36-4b21-bcba-2fbe1a830c77",
-      "name": "Respond to Dashboard2",
+      "id": "fd35db9c-05bd-40bf-8083-68ea03321d1e",
+      "name": "Respond Final1",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        720,
-        496
+        -960,
+        5936
       ]
-    },
-    {
-      "parameters": {
-        "url": "https://api.wts.chat/crm/v1/panel/5efab390-77c8-4298-907d-bcbd6811e840?IncludeDetails=Tags&IncludeDetails=Steps&IncludeDetails=StepsFields&IncludeDetails=StepsCardCount&IncludeDetails=Cards",
-        "sendQuery": true,
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "pn_S4Nhr9ooaOVIMCa44L6jbthw8nrX9287yeSfSTcQ"
-            },
-            {
-              "name": "accept",
-              "value": "application/json"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "id": "1fd8cdf4-c38b-461c-abf7-e72a048bc608",
-      "name": "Get Pipeline Structure",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [
-        -592,
-        496
-      ],
-      "alwaysOutputData": true
     }
   ],
   "connections": {
-    "Limit Flow 1": {
+    "Webhook Dashboard V2": {
       "main": [
         [
           {
-            "node": "Get All Contacts (Core)1",
+            "node": "Get Pipeline Structure V2",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Limit Flow 2": {
+    "Get Pipeline Structure V2": {
       "main": [
         [
           {
-            "node": "Aggregate Data",
+            "node": "Generate Pages1",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Aggregate Data": {
+    "Generate Pages1": {
       "main": [
         [
           {
-            "node": "Respond to Dashboard2",
+            "node": "Loop Over Pages V",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Webhook Dashboard4": {
+    "Loop Over Pages V": {
       "main": [
         [
           {
-            "node": "Get Pipeline Structure",
+            "node": "Compile Final Data1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Single Page V4",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get Cards (CRM)1": {
+    "Get Single Page V4": {
       "main": [
         [
           {
-            "node": "Limit Flow 1",
+            "node": "Loop Over Pages V",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get All Contacts (Core)1": {
+    "Compile Final Data1": {
       "main": [
         [
           {
-            "node": "Limit Flow 2",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Pipeline Structure": {
-      "main": [
-        [
-          {
-            "node": "Get Cards (CRM)1",
+            "node": "Respond Final1",
             "type": "main",
             "index": 0
           }

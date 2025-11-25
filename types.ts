@@ -47,10 +47,12 @@ export interface ActivityMetrics {
   conversionRate: number;
 }
 
+export type TeamRole = 'Closer' | 'SDR' | 'SDR/Closer' | 'Vendedor';
+
 export interface TeamMember {
   id: string;
   name: string;
-  role: 'Closer' | 'SDR' | 'Vendedor';
+  role: TeamRole;
   sales: number;
   target: number;
   commission: number;
@@ -93,6 +95,7 @@ export interface GoalSettings {
   revenueTarget: number; // Meta de Faturamento (Honorários Gerados)
   cashFlowTarget: number; // Meta de Caixa (Entradas)
   contractsTarget: number; // Meta de Quantidade de Contratos
+  deadline?: string; // Data limite para atingir a meta
 }
 
 export type DateRangePreset = 'today' | 'week' | 'month' | 'last_month' | 'custom' | 'all';
@@ -107,11 +110,12 @@ export interface DashboardData {
   lastUpdated: string;
   currentGoals: GoalSettings;
   metrics: {
-    totalRevenue: number; // Honorários Gerados
-    totalCashFlow: number; // Entradas
-    totalContracts: number; // Qtd Contratos
-    totalCommission: number; // Comissões Provisionadas
-    totalProposalValue: number; // Valores em Aberto (Propostas Enviadas)
+    totalRevenue: number; // Honorários Gerados (Data Assinatura)
+    totalCashFlow: number; // Entradas (Data Pagamento)
+    totalContracts: number; // Qtd Contratos (Data Assinatura)
+    totalMeetings: number; // Qtd Reuniões (Data Reunião)
+    totalCommission: number; // Comissões (Data Assinatura sobre Valor Entrada)
+    totalProposalValue: number; // Valores em Aberto
   };
   charts: {
     dailyRevenue: DailyPerformance[];
@@ -184,6 +188,9 @@ export interface WtsCardItem {
   contacts?: WtsContact[]; // Lista de contatos vinculados ao card
   contact?: WtsContact; // Single contact fallback
   fullContact?: WtsContact; // Helper property after merge
+  
+  // Propriedades dinâmicas do N8N Flattening
+  [key: string]: any;
 }
 
 export interface WtsStep {

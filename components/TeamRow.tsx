@@ -1,16 +1,23 @@
 import React from 'react';
-import { TeamMember } from '../types';
+import { TeamMember, TeamRole } from '../types';
 
 interface TeamRowProps {
   member: TeamMember;
   detailed?: boolean;
+  onRoleUpdate?: (id: string, newRole: TeamRole) => void;
 }
 
-export const TeamRow: React.FC<TeamRowProps> = ({ member, detailed = false }) => {
+export const TeamRow: React.FC<TeamRowProps> = ({ member, detailed = false, onRoleUpdate }) => {
   const percentage = Math.min((member.sales / member.target) * 100, 100);
   
   const formattedSales = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(member.sales);
   const formattedCommission = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(member.commission);
+
+  const handleRoleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+      if (onRoleUpdate) {
+          onRoleUpdate(member.id, e.target.value as TeamRole);
+      }
+  };
 
   if (detailed) {
     return (
@@ -22,7 +29,19 @@ export const TeamRow: React.FC<TeamRowProps> = ({ member, detailed = false }) =>
             </div>
             <div>
             <h5 className="text-sm font-semibold text-white truncate">{member.name}</h5>
-            <span className="text-[10px] text-gray-500 uppercase tracking-wider">{member.role}</span>
+            {onRoleUpdate ? (
+                <select 
+                    value={member.role} 
+                    onChange={handleRoleChange}
+                    className="bg-transparent text-[10px] text-gray-500 uppercase tracking-wider border-none focus:ring-0 cursor-pointer hover:text-gold-500 p-0"
+                >
+                    <option value="SDR">SDR</option>
+                    <option value="Closer">Closer</option>
+                    <option value="SDR/Closer">SDR/Closer</option>
+                </select>
+            ) : (
+                <span className="text-[10px] text-gray-500 uppercase tracking-wider">{member.role}</span>
+            )}
             </div>
         </div>
 

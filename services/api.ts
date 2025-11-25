@@ -1,18 +1,47 @@
-import { DashboardData, PipelineStage, DateFilterState, TeamMember, ServiceData, CardSimple, CreativeMetrics, TrafficSource, WtsContact, WtsCardItem, WtsTag } from '../types';
+
+import { DashboardData, PipelineStage, DateFilterState, TeamMember, ServiceData, CardSimple, CreativeMetrics, TrafficSource, WtsContact, WtsTag, TeamRole } from '../types';
 
 // ============================================================================
 // CONFIGURAÇÃO DE INTEGRAÇÃO
 // ============================================================================
 const WTS_BASE_URL = 'https://swebhooks.conversapp.com.br/webhook/webhook/dashboard-data';
 
-// User ID Mapping
-const USER_ID_MAP: Record<string, string> = {
-    '63f93580-afaa-49c8-af82-4c531d91e02a': 'Nerik Lino',
-    '697b8530-66ca-4ca6-8fc2-c9be22257ac9': 'Maria Eduarda',
-    '21b6c240-c438-44f1-929c-dd75e147bc2f': 'Ketylaine',
-    'f8c14041-5757-4d37-b3e4-6e9d8c3e9ec7': 'Italo',
-    '954fb85f-aeb6-4747-a2cc-95fe2a8ae105': 'Eric Gabriel',
-    '8282fef2-2c76-4fc8-a4cb-9194daf6a617': 'Eduarda Felipe'
+// Ordem Fixa das Etapas conforme solicitado
+const FIXED_STAGE_ORDER = [
+    'BASE (Entrada Inicial)',
+    'QUALIFICADO (Lead com potencial)',
+    'DESQUALIFICADO (Lead sem potencial)',
+    'FOLLOW-UP (Em acompanhamento)',
+    'REUNIÃO AGENDADA',
+    'NO-SHOW (Não compareceu)',
+    'RECUPERAÇÃO (Nova tentativa)',
+    'PROPOSTA ENVIADA',
+    'DESISTIU DE SEGUIR',
+    'CONTRATO ASSINADO',
+    'PAGAMENTO CONFIRMADO'
+];
+
+// Mapeamento de IDs e Funções
+// Roles: SDR, Closer, SDR/Closer
+const USER_CONFIG: Record<string, { name: string, role: TeamRole }> = {
+    '63f93580-afaa-49c8-af82-4c531d91e02a': { name: 'Nerik Lino', role: 'Closer' },
+    '697b8530-66ca-4ca6-8fc2-c9be22257ac9': { name: 'Maria Eduarda', role: 'SDR' }, 
+    '21b6c240-c438-44f1-929c-dd75e147bc2f': { name: 'Ketylaine Souza', role: 'SDR' },
+    'f8c14041-5757-4d37-b3e4-6e9d8c3e9ec7': { name: 'Italo Antonio', role: 'Closer' },
+    '954fb85f-aeb6-4747-a2cc-95fe2a8ae105': { name: 'Erick Gabriel', role: 'Closer' },
+    '8282fef2-2c76-4fc8-a4cb-9194daf6a617': { name: 'Eduarda Felipe', role: 'SDR' },
+};
+
+// Helper para buscar ID por nome (Fallback)
+const findUserConfigByName = (name: string): { id: string, config: { name: string, role: TeamRole } } | null => {
+    if (!name) return null;
+    const norm = normalizeStr(name);
+    for (const [id, config] of Object.entries(USER_CONFIG)) {
+        if (normalizeStr(config.name) === norm || norm.includes(normalizeStr(config.name))) {
+            return { id, config };
+        }
+    }
+    return null;
 };
 
 // ============================================================================
@@ -44,9 +73,17 @@ const formatDateString = (date: Date): string => {
     return `${year}-${month}-${day}`;
 };
 
-const parseDateSafe = (input: any): Date => {
-    if (!input) return new Date(); // Fallback to TODAY if missing
+const parseDateSafe = (input: any): Date | null => {
+    if (!input) return null;
     if (input instanceof Date) return input;
+
+    // Handle Array (common in ConversApp custom fields)
+    if (Array.isArray(input)) {
+        if (input.length === 0) return null;
+        input = input[0];
+    }
+    
+    if (!input) return null;
 
     // Numeric timestamp
     if (typeof input === 'number') {
@@ -56,17 +93,25 @@ const parseDateSafe = (input: any): Date => {
 
     // String parsing
     if (typeof input === 'string') {
+        let cleanInput = input.trim();
+        if (!cleanInput) return null;
+        
+        // Handle YYYY/MM/DD (Non-standard ISO) -> Convert to YYYY-MM-DD
+        if (cleanInput.match(/^\d{4}\/\d{1,2}\/\d{1,2}/)) {
+            cleanInput = cleanInput.replace(/\//g, '-');
+        }
+
         // ISO format usually works
-        const isoDate = new Date(input);
-        if (!isNaN(isoDate.getTime())) return isoDate;
+        const isoDate = new Date(cleanInput);
+        if (!isNaN(isoDate.getTime()) && cleanInput.includes('-')) return isoDate;
         
         // PT-BR dd/mm/yyyy
-        const ptBrMatch = input.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+        const ptBrMatch = cleanInput.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
         if (ptBrMatch) {
              return new Date(parseInt(ptBrMatch[3]), parseInt(ptBrMatch[2]) - 1, parseInt(ptBrMatch[1]));
         }
     }
-    return new Date();
+    return null;
 };
 
 const normalizeDate = (date: Date): Date => {
@@ -82,21 +127,13 @@ const fillMissingDates = (
     const start = new Date(startDateStr);
     const end = new Date(endDateStr);
     
-    // Safety cap to prevent browser freeze
-    const MAX_DAYS = 3650; // Max 10 years
-    
+    const MAX_DAYS = 3650; 
     let current = new Date(start);
     let safety = 0;
 
-    // Se a data de início for muito antiga, ajusta para 2023 (início dos dados relevantes)
-    // a menos que estejamos filtrando especificamente um ano anterior.
-    if (current.getFullYear() < 2020) {
-        current = new Date(2023, 0, 1);
-    }
-    // Clamp end if it's too far in future
-    if (end.getFullYear() > 2030) {
-        end.setFullYear(2030);
-    }
+    // Safety checks for extremely wide ranges
+    if (current.getFullYear() < 2020) current = new Date(2023, 0, 1);
+    if (end.getFullYear() > 2030) end.setFullYear(2030);
 
     while (current <= end && safety < MAX_DAYS) {
         const isoDate = formatDateString(current);
@@ -114,26 +151,22 @@ const fillMissingDates = (
 
 const getMonetaryValue = (val: any): number => {
     if (val === null || val === undefined) return 0;
+    if (Array.isArray(val) && val.length > 0) val = val[0];
+    
     if (typeof val === 'number') return val;
     if (typeof val === 'string') {
-        // Remove currency symbols, non-breaking spaces, letters
         let cleaned = val.replace(/[R$\s\u00A0a-zA-Z]/g, '').trim();
         if (!cleaned) return 0;
         
-        // Handle "1.000,00" (BR) vs "1,000.00" (US)
         if (cleaned.includes(',') && !cleaned.includes('.')) {
-             // 1000,00 -> 1000.00
              cleaned = cleaned.replace('.', '').replace(',', '.');
         } else if (cleaned.includes('.') && cleaned.includes(',')) {
              if (cleaned.lastIndexOf(',') > cleaned.lastIndexOf('.')) {
-                // 1.000,00 (BR)
                 cleaned = cleaned.replace(/\./g, '').replace(',', '.');
              } else {
-                // 1,000.00 (US)
                 cleaned = cleaned.replace(/,/g, '');
              }
         } else if (cleaned.includes(',')) {
-            // 100,50 (Assume BR simple)
             cleaned = cleaned.replace(',', '.');
         }
         
@@ -144,7 +177,77 @@ const getMonetaryValue = (val: any): number => {
 };
 
 // ============================================================================
-// LOGIC: ADS / UTM / CUSTOM FIELDS PARSER
+// HELPER: CUSTOM FIELDS EXTRACTION (FLATTENED AWARE)
+// ============================================================================
+
+/**
+ * Busca valor em campos personalizados.
+ * Prioriza chaves diretas no objeto (padrão N8N flattened) e depois busca em arrays aninhados.
+ */
+const getCustomFieldValue = (card: any, searchTerms: string[]): any => {
+    const normalizedTerms = searchTerms.map(t => normalizeStr(t));
+
+    // 1. Tentar encontrar diretamente nas chaves do objeto (N8N Flattened / JSON direto)
+    // Isso cobre casos onde customFields é um objeto simples { key: value }
+    const sources = [card, card.customFields, card.fullContact?.customFields];
+    
+    for (const source of sources) {
+        if (!source || typeof source !== 'object') continue;
+        
+        for (const key of Object.keys(source)) {
+            if (source[key] === undefined || source[key] === null) continue;
+
+            const normalizedKey = normalizeStr(key); 
+            // Remove hifens ou underscores do início e troca por espaços
+            const cleanKey = normalizedKey.replace(/^[-_]+/, '').replace(/[-_.]/g, ' '); 
+            
+            for (const term of normalizedTerms) {
+                const cleanTerm = term.replace(/[-_.]/g, ' ');
+                
+                // Match exato normalizado (ex: -valor-da-entrada === -valor-da-entrada)
+                if (normalizedKey === term) return source[key];
+                
+                // Match limpo (ex: valor da entrada === valor da entrada)
+                if (cleanKey === cleanTerm) return source[key];
+                
+                // Match parcial (ex: 'honorarios' in 'valor-honorarios')
+                if (term.length > 3 && cleanKey.includes(cleanTerm)) {
+                    return source[key];
+                }
+            }
+        }
+    }
+
+    // 2. Fallback: customFields como Array de Objetos [{id, name, value}]
+    // Comum em algumas APIs de CRM
+    const candidates: { key: string, value: any }[] = [];
+    
+    const extractFromArray = (fields: any) => {
+        if (Array.isArray(fields)) {
+            fields.forEach((f: any) => {
+                const k = f.name || f.key || f.id || '';
+                const v = f.value || f.text;
+                if (k && v !== undefined && v !== null) candidates.push({ key: normalizeStr(k), value: v });
+            });
+        }
+    };
+
+    extractFromArray(card.customFields);
+    if (card.fullContact) extractFromArray(card.fullContact.customFields);
+
+    for (const term of normalizedTerms) {
+        const cleanTerm = term.replace(/[-_.]/g, ' ');
+        const found = candidates.find(c => {
+            const cleanKey = c.key.replace(/^[-_]+/, '').replace(/[-_.]/g, ' ');
+            return cleanKey === cleanTerm || cleanKey.includes(cleanTerm);
+        });
+        if (found) return found.value;
+    }
+    return null;
+};
+
+// ============================================================================
+// LOGIC: ADS / UTM PARSER
 // ============================================================================
 
 interface ExtractedAdData {
@@ -153,79 +256,46 @@ interface ExtractedAdData {
     url: string | null;
 }
 
-const extractAdData = (card: WtsCardItem, contact?: WtsContact): ExtractedAdData => {
+const extractAdData = (card: any): ExtractedAdData => {
     const result: ExtractedAdData = { name: null, source: 'Orgânico', url: null };
+    const candidates: { key: string, value: string }[] = [];
+    
+    const collect = (obj: any, prefix = '') => {
+        if (!obj) return;
+        Object.keys(obj).forEach(key => {
+            const val = obj[key];
+            if (!val || typeof val === 'object') return;
+            candidates.push({ key: normalizeStr(prefix + key), value: String(val) });
+        });
+    };
 
-    // --- STRATEGY 1: CONTACT UTM (STRICT PRIORITY) ---
-    if (contact && contact.utm) {
-        const u = contact.utm;
-        
-        if (u.source) result.source = u.source;
-        if (u.Campaign) result.name = u.Campaign;
-        else if (u.campaign) result.name = u.campaign;
-        else if (u.content) result.name = u.content;
-
-        if (u.referalurl) result.url = u.referalurl;
-        else if (u.referralUrl) result.url = u.referralUrl;
-
-        if (result.name || result.source !== 'Orgânico') {
-            return result;
-        }
+    collect(card);
+    if (card.customFields && typeof card.customFields === 'object' && !Array.isArray(card.customFields)) collect(card.customFields);
+    
+    if (card.fullContact) {
+        if (card.fullContact.utm) collect(card.fullContact.utm, 'utm_');
     }
 
-    // --- STRATEGY 2: CARD/CONTACT CUSTOM FIELDS (Fallback) ---
-    if (!result.name) {
-        const checkFields = (fields: any) => {
-            const candidates: string[] = [];
-            if (!fields) return candidates;
+    for (const item of candidates) {
+        const { key: k, value: v } = item;
+        if (v.toLowerCase() === 'api' || v === 'undefined' || v === 'null') continue;
 
-            let normalizedFields: {key: string, value: any}[] = [];
-            
-            if (Array.isArray(fields)) {
-                normalizedFields = fields.map((f: any) => ({
-                    key: normalizeStr(f.name || f.key || f.id || ''),
-                    value: f.value || f.text
-                }));
-            } else if (typeof fields === 'object') {
-                normalizedFields = Object.entries(fields).map(([k, v]) => ({
-                    key: normalizeStr(k),
-                    value: v
-                }));
+        if (k.includes('utm_source') || k.includes('origem') || k === 'source') {
+             if (result.source === 'Orgânico' || (v.length > result.source.length && !v.toLowerCase().includes('unknown'))) {
+                result.source = v;
+             }
+        }
+        if (['ad_name', 'adname', 'campaign', 'campanha', 'utm_campaign', 'criativo'].some(x => k.includes(x))) {
+            if (!result.name || (v.length > result.name.length && !v.toLowerCase().includes('unknown'))) {
+                 result.name = v;
             }
-
-            normalizedFields.forEach(({key, value}) => {
-                if (value && typeof value === 'string') {
-                    if (isAdKey(key)) candidates.push(value);
-                    if (key.includes('source') || key.includes('origem')) result.source = value;
-                }
-            });
-            return candidates;
-        };
-
-        const cardCandidates = checkFields(card.customFields);
-        const contactCandidates = contact ? checkFields(contact.customFields) : [];
-        const allCandidates = [...cardCandidates, ...contactCandidates]
-            .filter(c => c && c.length > 2 && !['api', 'wts', 'unknown', 'manual', 'n/a'].includes(c.toLowerCase()));
-        
-        if (allCandidates.length > 0) {
-            result.name = allCandidates[0];
+        }
+        if ((k.includes('url') || k.includes('link')) && v.startsWith('http')) {
+            result.url = v;
         }
     }
-
     return result;
 };
-
-const isAdKey = (key: string) => {
-    return [
-        'ad_name', 'adname', 'nome do anuncio', 'nome do anúncio',
-        'campaign', 'campanha', 'utm_campaign', 'utm_content', 
-        'criativo', 'creative', 'anuncio', 'ads'
-    ].some(k => key.includes(k));
-};
-
-// ============================================================================
-// LOGIC: TAGS (SERVICES) FILTER
-// ============================================================================
 
 const OPERATIONAL_TAGS = new Set([
   'quente', 'frio', 'morno', 'follow', 'reunião', 'agendada', 'lead', 
@@ -233,14 +303,13 @@ const OPERATIONAL_TAGS = new Set([
   'desqualificado', 'contato', 'agendado', 'pendente', 'sdr', 'closer',
   'indicação', 'google', 'instagram', 'facebook', 'ads', 'orgânico',
   'conversapp', 'sistema', 'automático', 'clie', 'prosp', 'ativo',
-  'etapa', 'funil', 'card'
+  'etapa', 'funil', 'card', 'won', 'lost', 'open'
 ]);
 
 // ============================================================================
 // MAIN FETCH
 // ============================================================================
 
-// Mapa global para resolver IDs de tags (importante para o gráfico de serviços)
 let globalTagMap = new Map<string, WtsTag>();
 
 export const fetchConversAppData = async (currentData: DashboardData, dateFilter: DateFilterState): Promise<DashboardData> => {
@@ -248,13 +317,18 @@ export const fetchConversAppData = async (currentData: DashboardData, dateFilter
     const url = new URL(WTS_BASE_URL);
     url.searchParams.append('_t', new Date().getTime().toString());
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 180000);
+
     const response = await fetch(url.toString(), {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
-      mode: 'cors'
+      signal: controller.signal
     });
+    
+    clearTimeout(timeoutId);
 
-    if (!response.ok) throw new Error(`Status ${response.status}`);
+    if (!response.ok) throw new Error(`Status ${response.status}: ${response.statusText}`);
     
     const text = await response.text();
     if (!text) return currentData;
@@ -262,45 +336,31 @@ export const fetchConversAppData = async (currentData: DashboardData, dateFilter
     let rawJson;
     try { rawJson = JSON.parse(text); } catch (e) { throw new Error("JSON Inválido"); }
 
-    // Unwrap N8N structure
-    let rootData = rawJson;
+    // Suporte para estrutura N8N { data: [...] } ou array direto
+    let rawCards: any[] = [];
+    let rawSteps: any[] = [];
+
     if (Array.isArray(rawJson)) {
-        rootData = rawJson.length > 0 ? (rawJson[0].json || rawJson[0]) : {};
+        rawCards = rawJson;
+    } else if (rawJson.data && Array.isArray(rawJson.data)) {
+        rawCards = rawJson.data;
+        if (rawJson.steps) rawSteps = rawJson.steps; 
+        if (rawJson.tags) {
+             rawJson.tags.forEach((tag: any) => {
+                if (tag.id) globalTagMap.set(tag.id, tag);
+                if (tag.name) globalTagMap.set(normalizeStr(tag.name), tag); // Mapeia por nome também
+            });
+        }
     } else if (rawJson.json) {
-        rootData = rawJson.json;
+         if (rawJson.json.data) rawCards = rawJson.json.data;
+         else if (Array.isArray(rawJson.json)) rawCards = rawJson.json;
     }
 
-    // Populate Tag Map from Root Data - CRITICAL FIX
-    // Isso garante que tenhamos o nome da tag quando o card só traz tagIds
-    if (rootData.tags && Array.isArray(rootData.tags)) {
-        globalTagMap.clear();
-        rootData.tags.forEach((tag: any) => {
-            if (tag.id) globalTagMap.set(tag.id, tag);
-        });
-    }
-
-    const rawSteps = rootData.steps || [];
-    let rawCards = rootData.cards || rootData.data || rootData.items || [];
-    const rawContacts = rootData.contacts || [];
-
-    if (!Array.isArray(rawCards) && typeof rawCards === 'object') {
-        rawCards = Object.values(rawCards);
-    }
-    
-    // Map Contacts for O(1) Access
-    const contactsMap = new Map<string, WtsContact>();
-    if (Array.isArray(rawContacts)) {
-        rawContacts.forEach((c: any) => { if (c.id) contactsMap.set(c.id, c); });
-    }
-
-    // ========================================================================
-    // PIPELINE & STAGE MAPPING
-    // ========================================================================
-    
+    // Pipeline Maps
     const pipelineMap = new Map<string, PipelineStage>();
     
-    // 1. Initialize from Definitions
-    if (Array.isArray(rawSteps)) {
+    // Inicializa pipeline com base nas etapas do JSON ou cria defaults
+    if (rawSteps.length > 0) {
         rawSteps.forEach((s: any, idx: number) => {
             const id = String(s.id);
             pipelineMap.set(id, {
@@ -309,79 +369,78 @@ export const fetchConversAppData = async (currentData: DashboardData, dateFilter
                 count: 0,
                 total: 0,
                 color: getPipelineColor(idx),
-                cards: [],
+                cards: [], 
                 value: 0
             });
         });
     }
 
-    // 2. Process Cards
-    if (Array.isArray(rawCards)) {
-        rawCards.forEach((card: any) => {
-            if (!card) return;
+    // Processar Cards e Distribuir em Etapas (Visual apenas)
+    rawCards.forEach((card: any) => {
+        if (!card) return;
 
-            // Enrich with Contact
-            const contactId = card.contactId || card.contact_id;
-            if (contactId && contactsMap.has(contactId)) {
-                card.fullContact = contactsMap.get(contactId);
-            }
+        // Resolve Contact
+        let fullContact: WtsContact | undefined = undefined;
+        if (card.contactDetails) fullContact = card.contactDetails;
+        else if (card.contacts && Array.isArray(card.contacts) && card.contacts.length > 0) fullContact = card.contacts[0];
+        else if (card.contact) fullContact = card.contact;
+        card.fullContact = fullContact;
 
-            // Identify Step
-            let stepId = String(card.stepId || card.stageId || card.columnId || '');
-            let stepName = card.stepName || card.stageName || card.columnName || card.stage;
-            let targetStageId: string | null = null;
+        // Visual Pipeline Assignment
+        // Usa stepId ou tenta achar pelo nome (se N8N mandou 'stepName')
+        let targetStageId: string | null = null;
+        const stepId = String(card.stepId || card.stageId || '');
+        const stepName = normalizeStr(card.stepName || card.stageName || '');
 
-            if (stepId && pipelineMap.has(stepId)) {
-                targetStageId = stepId;
-            } else if (stepName) {
-                const normalizedStepName = normalizeStr(stepName);
-                for (const [pId, pVal] of pipelineMap.entries()) {
-                    if (normalizeStr(pVal.label) === normalizedStepName) {
-                        targetStageId = pId;
-                        break;
-                    }
-                }
-                if (!targetStageId) {
-                    const newId = stepId || `auto-${normalizedStepName}`;
-                    const newIndex = pipelineMap.size;
-                    pipelineMap.set(newId, {
-                        id: newId,
-                        label: stepName,
-                        count: 0,
-                        total: 0,
-                        color: getPipelineColor(newIndex),
-                        cards: [],
-                        value: 0
-                    });
-                    targetStageId = newId;
+        if (stepId && pipelineMap.has(stepId)) targetStageId = stepId;
+        else {
+            for (const [pId, pVal] of pipelineMap.entries()) {
+                if (normalizeStr(pVal.label) === stepName) {
+                    targetStageId = pId;
+                    break;
                 }
             }
-
-            if (targetStageId) {
-                const stage = pipelineMap.get(targetStageId);
-                if (stage) stage.cards.push(card);
-            } else {
-                if (pipelineMap.size === 0) {
-                     pipelineMap.set('default', {
-                        id: 'default',
-                        label: 'Geral',
-                        count: 0,
-                        total: 0,
-                        color: getPipelineColor(0),
-                        cards: [],
-                        value: 0
-                    });
-                    pipelineMap.get('default')!.cards.push(card);
-                } else {
-                    const firstId = pipelineMap.keys().next().value;
-                    pipelineMap.get(firstId)!.cards.push(card);
-                }
+            // Auto create if missing
+            if (!targetStageId && stepName) {
+                const newId = stepId || `auto-${stepName}`;
+                pipelineMap.set(newId, {
+                     id: newId,
+                     label: card.stepName || "Etapa Nova",
+                     count: 0, 
+                     total: 0,
+                     color: getPipelineColor(pipelineMap.size),
+                     cards: [],
+                     value: 0
+                });
+                targetStageId = newId;
             }
-        });
-    }
+        }
+
+        if (targetStageId) pipelineMap.get(targetStageId)!.cards.push(card);
+        else {
+             if (pipelineMap.size === 0) pipelineMap.set('default', { id: 'default', label: 'Geral', count: 0, total: 0, color: '#404040', cards: [], value: 0});
+             pipelineMap.get(pipelineMap.keys().next().value)!.cards.push(card);
+        }
+    });
 
     const finalPipeline = Array.from(pipelineMap.values());
-    return processMetrics(currentData, dateFilter, finalPipeline);
+    
+    // ORDENAÇÃO POR CAMPO 'POSITION' e FIXA
+    finalPipeline.sort((a, b) => {
+        // 1. Ordem Fixa (Hardcoded Priority)
+        const normA = normalizeStr(a.label);
+        const normB = normalizeStr(b.label);
+        
+        const indexA = FIXED_STAGE_ORDER.findIndex(fixed => normalizeStr(fixed).includes(normA) || normA.includes(normalizeStr(fixed)));
+        const indexB = FIXED_STAGE_ORDER.findIndex(fixed => normalizeStr(fixed).includes(normB) || normB.includes(normalizeStr(fixed)));
+
+        const valA = indexA === -1 ? 999 : indexA;
+        const valB = indexB === -1 ? 999 : indexB;
+
+        return valA - valB;
+    });
+
+    return processMetrics(currentData, dateFilter, finalPipeline, rawCards);
 
   } catch (error) {
     console.error('API Processing Error:', error);
@@ -394,33 +453,44 @@ export const fetchConversAppData = async (currentData: DashboardData, dateFilter
 // METRICS PROCESSING
 // ============================================================================
 
-const processMetrics = (currentData: DashboardData, dateFilter: DateFilterState, pipeline: PipelineStage[]): DashboardData => {
-    // Map stores both total and breakdown for interactive charts
+const processMetrics = (
+    currentData: DashboardData, 
+    dateFilter: DateFilterState, 
+    pipeline: PipelineStage[],
+    allCards: any[]
+): DashboardData => {
+    
     const dailyRevenueMap = new Map<string, { value: number, breakdown: {name: string, value: number}[] }>(); 
-    const dailyLeadsMap = new Map<string, { value: number, breakdown?: any[] }>();   
+    const dailyLeadsMap = new Map<string, { value: number }>();   
     
     const servicesMap = new Map<string, any>();
     const teamMap = new Map<string, TeamMember>();
     const creativeMap = new Map<string, CreativeMetrics>();
     const trafficMap = new Map<string, TrafficSource>();
     
-    let totalRevenue = 0;
-    let totalContracts = 0;
+    let totalRevenue = 0; 
+    let totalContracts = 0; 
+    let totalCashFlow = 0; 
+    let totalMeetings = 0; 
     let totalProposalValue = 0;
+    let totalCommission = 0;
 
-    // --- DATE RANGE SETUP ---
-    // Usamos datas bem abertas inicialmente para filtrar os cards
-    // MAS, para os gráficos, vamos calcular o range real dos dados
-    let filterStartDate: Date;
-    let filterEndDate: Date;
+    // Persist Role Customizations from UI
+    const existingRoles = new Map<string, TeamRole>();
+    if (currentData && currentData.team) {
+        currentData.team.forEach(m => existingRoles.set(m.id, m.role));
+    }
+
+    // Date Filter Config
+    let filterStartDate: Date, filterEndDate: Date;
     const today = new Date();
 
     if (dateFilter.preset === 'all') {
-        filterStartDate = new Date(1970, 0, 1);
+        filterStartDate = new Date(2000, 0, 1);
         filterEndDate = new Date(2100, 11, 31);
     } else if (dateFilter.startDate && dateFilter.endDate) {
-        filterStartDate = normalizeDate(parseDateSafe(dateFilter.startDate));
-        filterEndDate = normalizeDate(parseDateSafe(dateFilter.endDate));
+        filterStartDate = normalizeDate(parseDateSafe(dateFilter.startDate) || new Date());
+        filterEndDate = normalizeDate(parseDateSafe(dateFilter.endDate) || new Date());
     } else {
         const past = new Date();
         if (dateFilter.preset === 'today') past.setDate(today.getDate());
@@ -436,246 +506,366 @@ const processMetrics = (currentData: DashboardData, dateFilter: DateFilterState,
         filterEndDate = normalizeDate(today);
     }
 
-    // Variáveis para detectar o PRIMEIRO e ÚLTIMO dado real encontrado
-    // Isso corrige o bug de "Todo o período" renderizar 50 anos de dados vazios
     let minDataDate = new Date(8640000000000000); 
     let maxDataDate = new Date(-8640000000000000);
     let hasData = false;
 
-    // --- ITERATE PIPELINE ---
-    pipeline.forEach(stage => {
-        const stageLabelNorm = normalizeStr(stage.label);
+    const isDateInRange = (d: Date | null): boolean => {
+        if (!d) return false;
+        const norm = normalizeDate(d);
+        if (norm < minDataDate) minDataDate = norm;
+        if (norm > maxDataDate) maxDataDate = norm;
+        hasData = true;
+        return norm >= filterStartDate && norm <= filterEndDate;
+    };
+
+    // ------------------------------------------------------------------------
+    // SINGLE PASS THROUGH ALL CARDS
+    // ------------------------------------------------------------------------
+
+    allCards.forEach(card => {
+        // --- DATA EXTRACTION ---
+        // 1. Tentar ler o Monetary Amount padrão
+        let monetaryVal = getMonetaryValue(card.monetaryAmount);
+        if (monetaryVal === 0) monetaryVal = getMonetaryValue(card.monetary_amount);
         
-        // --- STAGE TYPE DETECTION ---
-        // Detecção explícita de Pagamento Confirmado e Contrato Assinado
-        const isPaymentConfirmed = stageLabelNorm.includes('pagamento') && stageLabelNorm.includes('confirmado');
-        const isContractSigned = stageLabelNorm.includes('contrato') && stageLabelNorm.includes('assinado');
+        // 2. Se for 0, busca em campos personalizados com termos expandidos e específicos
+        if (monetaryVal === 0) {
+            const customVal = getCustomFieldValue(card, [
+                'valor', 
+                'honorarios', 
+                'honor-rios',
+                'preco', 
+                'valor-contrato', 
+                'valor-do-contrato',
+                'valor-causa', 
+                'honorarios-contratuais',
+                'valor-total',
+                'montante',
+                'receita'
+            ]);
+            monetaryVal = getMonetaryValue(customVal);
+        }
+
+        const contact = card.fullContact;
+        const cardTitle = card.title || (contact ? contact.name : 'Sem Nome');
         
-        // Detecção de Proposta
-        const isProposalStage = stageLabelNorm.includes('proposta') || stageLabelNorm.includes('enviada');
+        // DATAS PRINCIPAIS
+        // Usa createdAt ou updatedAt como fallback para filtro se não tiver data específica
+        const creationDate = parseDateSafe(card.createdAt);
+        const updateDate = parseDateSafe(card.updatedAt);
+        
+        // 1. DATA DA REUNIÃO (Com chave específica solicitada)
+        const meetingDateRaw = getCustomFieldValue(card, [
+            'data-da-reuni-o', // Chave exata do JSON
+            'data da reuniao', 
+            'agendamento', 
+            'dt reuniao', 
+            'data agendamento'
+        ]);
+        const meetingDate = parseDateSafe(meetingDateRaw);
 
-        const filteredCards: CardSimple[] = [];
-        let stageValue = 0;
+        // 2. DATA DE ASSINATURA / CONTRATO (Com chave específica solicitada)
+        const contractDateRaw = getCustomFieldValue(card, [
+            'assinatura-do-contra', // Chave exata do JSON
+            'assinatura', 
+            'data assinatura', 
+            'fechamento', 
+            'contrato', 
+            'data fechamento'
+        ]);
+        const contractDate = parseDateSafe(contractDateRaw);
 
-        stage.cards.forEach((card: any) => {
-            const contact = card.fullContact;
-            const status = String(card.status || '').toLowerCase();
-            
-            // --- 1. DETERMINE IF SALE FIRST (Crucial for Date Logic) ---
-            // É venda se: O card estiver marcado como 'won' OU se estiver em etapas de sucesso
-            // independente do status ser 'open', desde que nao seja lost/archived explicitamente em etapa errada
-            let isSale = status === 'won' || status === 'paid' || status === 'ganho';
-            if (!isSale && (isPaymentConfirmed || isContractSigned)) {
-                if (status !== 'lost' && status !== 'perdido' && status !== 'archived') {
-                    isSale = true;
-                }
+        // 3. DATA DO PAGAMENTO
+        const paymentDateRaw = getCustomFieldValue(card, [
+            'data-do-pagamento', // Chave exata do JSON
+            'pagamento', 
+            'data pagamento'
+        ]);
+        const paymentDate = parseDateSafe(paymentDateRaw);
+
+        // 4. VALOR DE ENTRADA
+        const entryValueRaw = getCustomFieldValue(card, [
+            '-valor-da-entrada', // Chave exata do JSON (com hífen inicial)
+            'valor-da-entrada',
+            'valor da entrada', 
+            'entrada', 
+            'sinal'
+        ]);
+        const entryValue = getMonetaryValue(entryValueRaw);
+
+        // VERIFICAÇÃO DE ETAPA PARA REGRAS DE NEGÓCIO
+        // Nota: O card pode não ter stepName (null), então a lógica não deve depender apenas disso
+        const stageName = normalizeStr(card.stepName || card.stageName || '');
+        
+        // Definição de Etapas de Sucesso (Won) por Nome (Fallback)
+        const isContractStageByName = stageName.includes('contrato assinado') || stageName.includes('pagamento confirmado');
+        const isPaymentStageByName = stageName.includes('pagamento confirmado');
+
+        // Um card é considerado "Ganho" se tiver nome de etapa de ganho OU data de pagamento preenchida
+        const isEffectiveWin = isContractStageByName || (paymentDate !== null);
+
+        // Lógica de Fallback de Datas
+        let effectiveContractDate = contractDate;
+        if (!effectiveContractDate && isContractStageByName) {
+             effectiveContractDate = updateDate || creationDate;
+        }
+
+        // --- USER MAPPING ---
+        let userId = card.responsibleUserId;
+        if (!userId && card.responsibleUser) userId = card.responsibleUser.id;
+        
+        userId = String(userId || 'unassigned');
+        
+        let userName = card.responsibleUser?.name || 'Sem Responsável';
+        let memberConfig = USER_CONFIG[userId];
+        
+        if (!memberConfig && userName !== 'Sem Responsável') {
+            const found = findUserConfigByName(userName);
+            if (found) {
+                userId = found.id;
+                memberConfig = found.config;
+            }
+        }
+
+        if (memberConfig) userName = memberConfig.name;
+
+        if (!teamMap.has(userId)) {
+            let role: TeamRole = memberConfig ? memberConfig.role : 'Vendedor';
+            if (existingRoles.has(userId)) {
+                role = existingRoles.get(userId)!;
             }
 
-            // --- 2. DATE LOGIC (Requested Update) ---
-            // Se for venda (Pagamento confirmado), usamos updatedAt. Se não, createdAt.
-            let relevantDateRaw = card.createdAt;
-            if (isSale) {
-                 // Prioriza updated_at para fechamento de contrato
-                 relevantDateRaw = card.updatedAt || card.updated_at || card.dateLastActivity || card.createdAt;
-            }
-            
-            const relevantDate = parseDateSafe(relevantDateRaw);
-            const normalizedDate = normalizeDate(relevantDate);
-
-            // Strict Filter Check
-            if (normalizedDate < filterStartDate || normalizedDate > filterEndDate) {
-                return; 
-            }
-
-            // Rastreia o intervalo REAL de dados para os gráficos
-            if (normalizedDate < minDataDate) minDataDate = normalizedDate;
-            if (normalizedDate > maxDataDate) maxDataDate = normalizedDate;
-            hasData = true;
-
-            const val = getMonetaryValue(card.monetaryAmount || card.value || card.amount);
-            
-            stageValue += val;
-            const cardTitle = card.title || (contact ? contact.name : 'Sem Nome');
-
-            // --- 3. METRIC: Daily Leads ---
-            // Leads sempre contam pela data de criação
-            const creationDate = parseDateSafe(card.createdAt);
-            const normCreationDate = normalizeDate(creationDate);
-            if (normCreationDate >= filterStartDate && normCreationDate <= filterEndDate) {
-                const dayKey = formatDateString(creationDate);
-                const entry = dailyLeadsMap.get(dayKey) || { value: 0 };
-                entry.value++;
-                dailyLeadsMap.set(dayKey, entry);
-                
-                // Também atualiza min/max date baseado na criação de leads
-                if (normCreationDate < minDataDate) minDataDate = normCreationDate;
-                if (normCreationDate > maxDataDate) maxDataDate = normCreationDate;
-            }
-
-            // --- 4. METRIC: Revenue / Proposals ---
-            if (isSale) {
-                totalRevenue += val;
-                totalContracts++;
-                
-                // Agrupa vendas por data de atualização (fechamento)
-                const saleDayKey = formatDateString(relevantDate);
-                const currentEntry = dailyRevenueMap.get(saleDayKey) || { value: 0, breakdown: [] };
-                currentEntry.value += val;
-                currentEntry.breakdown.push({ name: cardTitle, value: val });
-                dailyRevenueMap.set(saleDayKey, currentEntry);
-            } else if (isProposalStage) {
-                totalProposalValue += val;
-            }
-
-            // --- 5. METRIC: Services / Tags (FIXED) ---
-            let rawTags: any[] = [];
-            
-            // 1. Tags do Objeto Card
-            if (Array.isArray(card.tags)) rawTags = [...card.tags];
-            
-            // 2. Tags por ID (CORREÇÃO CRÍTICA)
-            // Muitos cards vêm apenas com tagIds, precisamos buscar no mapa global
-            if (Array.isArray(card.tagIds)) {
-                card.tagIds.forEach((tid: string) => {
-                    if (globalTagMap.has(tid)) {
-                        rawTags.push(globalTagMap.get(tid));
-                    }
-                });
-            }
-
-            // 3. Tags do Contato
-            if (contact && Array.isArray(contact.tags)) rawTags = [...rawTags, ...contact.tags];
-
-            const displayTags: {name: string, color: string}[] = [];
-            const processedTagNames = new Set<string>();
-
-            rawTags.forEach(t => {
-                let name = "";
-                let color = "#C59D5F";
-                if (typeof t === 'string') name = t;
-                else if (typeof t === 'object') {
-                    name = t.name || t.label || t.tag?.name || "";
-                    color = t.color || t.bgColor || t.tag?.color || color;
-                }
-                if (!name) return;
-                
-                const nameNorm = normalizeStr(name);
-                if (processedTagNames.has(nameNorm)) return;
-                processedTagNames.add(nameNorm);
-                displayTags.push({ name, color });
-
-                if (!OPERATIONAL_TAGS.has(nameNorm)) {
-                    const current = servicesMap.get(name) || { count: 0, value: 0, color: color };
-                    current.count++;
-                    if (isSale) current.value += val;
-                    servicesMap.set(name, current);
-                }
+            teamMap.set(userId, {
+                id: userId,
+                name: userName,
+                role: role, 
+                sales: 0,
+                target: 100000,
+                commission: 0,
+                avatarInitial: getInitials(userName),
+                activity: { leads: 0, scheduledMeetings: 0, meetingsHeld: 0, proposalsSent: 0, contractsSigned: 0, conversionRate: 0 }
             });
+        }
+        const member = teamMap.get(userId)!;
 
-            // --- 6. METRIC: Ads / Creatives / Source ---
-            const adData = extractAdData(card, contact);
-            if (adData.source) {
-                const sourceName = adData.source.length > 20 ? adData.source.substring(0, 20) + '...' : adData.source;
-                const sourceKey = normalizeStr(sourceName);
-                const currentSource = trafficMap.get(sourceKey) || { 
-                    name: sourceName, 
-                    value: 0, 
-                    salesCount: 0, 
-                    conversionRate: 0, 
-                    color: '#808080' 
-                };
+        // --- METRICS ---
+
+        // LEADS (Created)
+        if (isDateInRange(creationDate)) {
+            const dayKey = formatDateString(creationDate!);
+            const entry = dailyLeadsMap.get(dayKey) || { value: 0 };
+            entry.value++;
+            dailyLeadsMap.set(dayKey, entry);
+            member.activity.leads++;
+        }
+
+        // REUNIÕES
+        if (isDateInRange(meetingDate)) {
+            totalMeetings++;
+            member.activity.meetingsHeld++;
+        }
+
+        // CONTRATOS & REVENUE KPI (Honorários Gerados - Total Booked)
+        // Conta se está na etapa de contrato/pagamento OU se tem data de contrato explícita
+        if ((isContractStageByName || contractDate) && isDateInRange(effectiveContractDate)) {
+            totalContracts++; 
+            member.activity.contractsSigned++;
+            totalRevenue += monetaryVal; 
+            member.sales += monetaryVal;
+
+            // Comissões
+            const baseCommValue = entryValue > 0 ? entryValue : 0; 
+            let commissionVal = 0;
+            if (baseCommValue > 0) {
+                if (member.role === 'SDR') commissionVal = baseCommValue * 0.03; 
+                else if (member.role === 'Closer') commissionVal = baseCommValue * 0.05;
+                else if (member.role === 'SDR/Closer') commissionVal = baseCommValue * 0.08;
+                else commissionVal = baseCommValue * 0.05; 
+                member.commission += commissionVal;
+                totalCommission += commissionVal;
+            }
+        }
+
+        // CHART: Evolução de Faturamento Diário & KPI CAIXA
+        // Solicitação: Considerar "data-do-pagamento" e "monetaryamount"
+        // Lógica: Se tem data de pagamento, entra no gráfico. Não depende do nome da etapa (pois pode vir null).
+        
+        let revenueChartDate = paymentDate;
+
+        if (revenueChartDate && isDateInRange(revenueChartDate)) {
+             // KPI Caixa: Soma entrada se houver, senão total
+             const cashIn = entryValue > 0 ? entryValue : monetaryVal;
+             totalCashFlow += cashIn;
+
+             // Gráfico: Usa monetaryAmount Total
+             if (monetaryVal > 0) {
+                const payDayKey = formatDateString(revenueChartDate);
+                const currentEntry = dailyRevenueMap.get(payDayKey) || { value: 0, breakdown: [] };
+                currentEntry.value += monetaryVal;
                 
+                // Evita duplicatas visuais no tooltip
+                if (!currentEntry.breakdown.some(b => b.name === cardTitle && Math.abs(b.value - monetaryVal) < 0.1)) {
+                    currentEntry.breakdown.push({ name: cardTitle, value: monetaryVal });
+                }
+                dailyRevenueMap.set(payDayKey, currentEntry);
+             }
+        } else if (isPaymentStageByName && !revenueChartDate) {
+            // Fallback: Se está na etapa "Pagamento" mas não tem data, usa data de atualização
+            // Apenas para não perder o dado se o usuário esqueceu de preencher o campo customizado
+            const fallbackDate = updateDate || creationDate;
+            if (fallbackDate && isDateInRange(fallbackDate)) {
+                 const cashIn = entryValue > 0 ? entryValue : monetaryVal;
+                 totalCashFlow += cashIn;
+                 
+                 // Nota: Decidimos NÃO colocar no gráfico de evolução se não tiver a data de pagamento explicita, 
+                 // para ser fiel à solicitação, mas somamos no KPI total.
+            }
+        }
+
+        // PROPOSTAS
+        if ((isDateInRange(creationDate) || isDateInRange(updateDate)) && (stageName.includes('proposta') || stageName.includes('negocia'))) {
+             totalProposalValue += monetaryVal;
+             member.activity.proposalsSent++;
+        }
+
+        // --- TAGS COLORIDAS ---
+        const isActiveForStats = isDateInRange(creationDate) || isDateInRange(effectiveContractDate) || isDateInRange(updateDate);
+
+        if (isActiveForStats) {
+             let tagsToProcess: {name: string, color?: string}[] = [];
+             
+             if (card.tags_data && Array.isArray(card.tags_data)) {
+                 card.tags_data.forEach((t: any) => {
+                     if (t.name) tagsToProcess.push({ name: t.name, color: t.color });
+                 });
+             } else if (card.tags_names) {
+                  card.tags_names.split(',').forEach((t: string) => tagsToProcess.push({ name: t.trim() }));
+             } else if (Array.isArray(card.tags)) {
+                 card.tags.forEach((t: any) => {
+                     const n = typeof t === 'string' ? t : (t.name || '');
+                     if (n) tagsToProcess.push({ name: n, color: t.bgColor });
+                 });
+             }
+
+             const processedTagNames = new Set<string>();
+             
+             tagsToProcess.forEach(tObj => {
+                const nameNorm = normalizeStr(tObj.name);
+                
+                if (!processedTagNames.has(nameNorm) && !OPERATIONAL_TAGS.has(nameNorm)) {
+                    processedTagNames.add(nameNorm);
+                    
+                    let tagColor = tObj.color || '#C59D5F';
+                    
+                    if (!tObj.color && globalTagMap.has(nameNorm)) {
+                        tagColor = globalTagMap.get(nameNorm)!.bgColor;
+                    }
+
+                    const current = servicesMap.get(tObj.name) || { name: tObj.name, value: 0, monetaryValue: 0, color: tagColor };
+                    current.value++; 
+                    if (isEffectiveWin) {
+                        current.monetaryValue += monetaryVal;
+                    }
+                    servicesMap.set(tObj.name, current);
+                }
+             });
+
+             const adData = extractAdData(card);
+             if (adData.source) {
+                const sourceKey = normalizeStr(adData.source);
+                const currentSource = trafficMap.get(sourceKey) || { 
+                    name: adData.source, value: 0, salesCount: 0, conversionRate: 0, color: '#808080' 
+                };
                 if (sourceKey.includes('google')) currentSource.color = '#4285F4';
                 else if (sourceKey.includes('insta')) currentSource.color = '#E1306C';
-                else if (sourceKey.includes('face')) currentSource.color = '#1877F2';
-                else if (sourceKey.includes('indic')) currentSource.color = '#34A853';
-
-                currentSource.value++; 
-                if (isSale) currentSource.salesCount++;
-                if (currentSource.value > 0) currentSource.conversionRate = Math.round((currentSource.salesCount / currentSource.value) * 100);
                 
+                if (isDateInRange(creationDate)) currentSource.value++;
+                if (isEffectiveWin) currentSource.salesCount++;
+                if (currentSource.value > 0) currentSource.conversionRate = Math.round((currentSource.salesCount / currentSource.value) * 100);
                 trafficMap.set(sourceKey, currentSource);
-            }
+             }
 
-            if (adData.name) {
-                 const cleanName = adData.name.replace(/#\d+/g, '').trim();
-                 const current = creativeMap.get(cleanName) || { 
-                     id: cleanName, 
-                     name: cleanName, 
-                     url: adData.url || undefined,
-                     source: adData.source, 
-                     leads: 0, 
-                     sales: 0, 
-                     revenue: 0 
-                 };
-                 current.leads++;
-                 if (isSale) { 
-                     current.sales++; 
-                     current.revenue += val; 
+             if (adData.name) {
+                const cleanName = adData.name;
+                const current = creativeMap.get(cleanName) || { 
+                    id: cleanName, name: cleanName, url: adData.url || undefined, source: adData.source, leads: 0, sales: 0, revenue: 0 
+                };
+                if (isDateInRange(creationDate)) current.leads++;
+                if (isEffectiveWin) { 
+                    current.sales++; 
+                    current.revenue += monetaryVal; 
+                }
+                creativeMap.set(cleanName, current);
+             }
+        }
+    });
+
+    // ------------------------------------------------------------------------
+    // PREPARE VISUAL PIPELINE (COM ORDENAÇÃO DE CARDS)
+    // ------------------------------------------------------------------------
+    pipeline.forEach(stage => {
+        const filteredCards: CardSimple[] = [];
+        let stageTotal = 0;
+
+        stage.cards.forEach((card: any) => {
+             const creationDate = parseDateSafe(card.createdAt);
+             const updateDate = parseDateSafe(card.updatedAt);
+             const contractDate = parseDateSafe(getCustomFieldValue(card, ['assinatura-do-contra', 'assinatura']));
+             const meetingDate = parseDateSafe(getCustomFieldValue(card, ['data-da-reuni-o', 'reuniao']));
+             
+             // Lógica de filtro para visualização
+             if (isDateInRange(creationDate) || isDateInRange(updateDate) || isDateInRange(contractDate) || isDateInRange(meetingDate)) {
+                 let val = getMonetaryValue(card.monetaryAmount || card.value);
+                 if (val === 0) {
+                     val = getMonetaryValue(getCustomFieldValue(card, ['valor', 'honorarios', 'honor-rios', 'preco', 'contrato']));
                  }
-                 creativeMap.set(cleanName, current);
-            }
 
-            // --- 7. METRIC: Team ---
-            const userId = String(card.responsibleUserId || 'unassigned');
-            let userName = card.responsibleUser?.name;
-            if (USER_ID_MAP[userId]) {
-                userName = USER_ID_MAP[userId];
-            } else if (!userName || userId === 'unassigned') {
-                userName = 'Sem Responsável';
-            }
-            
-            if (!teamMap.has(userId)) {
-                teamMap.set(userId, {
-                    id: userId,
-                    name: userName,
-                    role: 'Vendedor', 
-                    sales: 0,
-                    target: 100000,
-                    commission: 0,
-                    avatarInitial: getInitials(userName),
-                    activity: { leads: 0, scheduledMeetings: 0, meetingsHeld: 0, proposalsSent: 0, contractsSigned: 0, conversionRate: 0 }
-                });
-            }
-            const member = teamMap.get(userId)!;
-            member.activity.leads++;
-            if (isSale) {
-                member.sales += val;
-                member.commission += (val * 0.1); 
-                member.activity.contractsSigned++;
-            }
-            if (isProposalStage) {
-                member.activity.proposalsSent++;
-            }
-            if (member.activity.leads > 0) {
-                 member.activity.conversionRate = Math.round((member.activity.contractsSigned / member.activity.leads) * 100);
-            }
+                 stageTotal += val;
+                 
+                 const displayTags: {name: string, color: string}[] = [];
+                 
+                 if (card.tags_data && Array.isArray(card.tags_data)) {
+                     card.tags_data.slice(0,3).forEach((t:any) => displayTags.push({ name: t.name, color: t.color || '#333' }));
+                 } else if (card.tags_names) {
+                     card.tags_names.split(',').slice(0,3).forEach((t: string) => displayTags.push({ name: t.trim(), color: '#333' }));
+                 } else if (card.tags && Array.isArray(card.tags)) {
+                     card.tags.slice(0,3).forEach((t:any) => displayTags.push({ name: t.name || 'Tag', color: t.bgColor || '#333'}));
+                 }
 
-            filteredCards.push({
-                id: String(card.id),
-                title: cardTitle,
-                value: val,
-                responsibleName: userName,
-                date: relevantDate.toLocaleDateString('pt-BR'),
-                tags: displayTags,
-                adName: adData.name || undefined,
-                adUrl: adData.url || undefined
-            });
+                 filteredCards.push({
+                     id: String(card.id),
+                     title: card.title || card.fullContact?.name || 'Sem Nome',
+                     value: val,
+                     responsibleName: card.responsibleUser?.name || 'Sem Resp.',
+                     date: (contractDate || creationDate || new Date()).toLocaleDateString('pt-BR'),
+                     tags: displayTags,
+                     adName: extractAdData(card).name || undefined,
+                     rawDate: (contractDate || creationDate || new Date()),
+                     position: card.position || 0
+                 } as any);
+             }
+        });
+
+        // ORDENAÇÃO DOS CARDS
+        filteredCards.sort((a: any, b: any) => {
+             const posA = a.position !== undefined ? a.position : 9999;
+             const posB = b.position !== undefined ? b.position : 9999;
+             if (posA !== posB) return posA - posB;
+             const dateA = a.rawDate ? new Date(a.rawDate).getTime() : 0;
+             const dateB = b.rawDate ? new Date(b.rawDate).getTime() : 0;
+             return dateB - dateA; 
         });
 
         stage.cards = filteredCards;
         stage.count = filteredCards.length;
-        stage.value = stageValue;
+        stage.value = stageTotal;
     });
 
-    const totalPipelineItems = pipeline.reduce((sum, s) => sum + s.count, 0);
-    pipeline.forEach(s => s.total = totalPipelineItems);
+    // ------------------------------------------------------------------------
+    // FINAL DATA AGGREGATION
+    // ------------------------------------------------------------------------
 
-    // --- FINALIZE CHARTS ---
-    
-    // CORREÇÃO CRÍTICA PARA 'TODO O PERÍODO'
-    // Se preset for 'all', usamos o intervalo de dados reais (minDataDate até maxDataDate)
-    // ao invés de usar 1970 até 2100. Isso reduz os pontos do gráfico de milhares para apenas os dias relevantes.
     let chartStart = filterStartDate;
     let chartEnd = filterEndDate;
 
@@ -683,29 +873,23 @@ const processMetrics = (currentData: DashboardData, dateFilter: DateFilterState,
         if (hasData) {
             chartStart = minDataDate;
             chartEnd = maxDataDate;
-            
-            // Safety: se por acaso só tiver um dia, expande um pouco pra ficar bonito no gráfico
-            if (chartStart.getTime() === chartEnd.getTime()) {
-                const tempEnd = new Date(chartEnd);
-                tempEnd.setDate(tempEnd.getDate() + 1);
-                chartEnd = tempEnd;
-            }
         } else {
-            // Se não tiver dados, mostra range do mês atual
-            const d = new Date();
-            d.setDate(1);
-            chartStart = d;
+            chartStart = new Date(new Date().getFullYear(), 0, 1);
             chartEnd = new Date();
         }
     }
-
-    // Double check sanity
+    
+    // Safety for chart display range
     if (chartStart.getFullYear() < 2000) chartStart = new Date(2023, 0, 1);
-    if (chartEnd > new Date()) chartEnd = new Date(); // Don't project too far into future
+    
+    // Allow future dates for projection if data exists
+    const safeEnd = hasData && maxDataDate > new Date() ? maxDataDate : new Date();
+    if (chartEnd > safeEnd) chartEnd = safeEnd;
+    if (chartEnd < chartStart) chartEnd = chartStart;
 
     const chartDays = fillMissingDates(dailyRevenueMap, formatDateString(chartStart), formatDateString(chartEnd));
     const finalDailyRevenue = chartDays.map(d => ({
-        day: d.date.split('-')[2] + '/' + d.date.split('-')[1], // DD/MM for better XAxis
+        day: d.date.split('-')[2] + '/' + d.date.split('-')[1], 
         fullDate: d.date,
         meta: currentData.currentGoals.revenueTarget / 30, 
         realizado: d.value,
@@ -714,20 +898,17 @@ const processMetrics = (currentData: DashboardData, dateFilter: DateFilterState,
 
     const leadDays = fillMissingDates(dailyLeadsMap, formatDateString(chartStart), formatDateString(chartEnd));
     const finalDailyLeads = leadDays.map(d => ({
-        day: d.date.split('-')[2] + '/' + d.date.split('-')[1], // DD/MM
+        day: d.date.split('-')[2] + '/' + d.date.split('-')[1], 
         count: d.value
     }));
 
-    const finalServices = Array.from(servicesMap.entries())
-        .map(([k, v]) => ({ name: k, value: v.count, monetaryValue: v.value, color: v.color }))
-        .sort((a,b) => b.value - a.value)
-        .slice(0, 10);
+    const finalServices = Array.from(servicesMap.values()).sort((a,b) => b.value - a.value).slice(0, 10);
+    const finalCreatives = Array.from(creativeMap.values()).sort((a,b) => b.revenue - a.revenue);
+    const finalTraffic = Array.from(trafficMap.values()).sort((a,b) => b.value - a.value);
 
-    const finalCreatives = Array.from(creativeMap.values())
-        .sort((a,b) => b.revenue - a.revenue || b.leads - a.leads);
-        
-    const finalTraffic = Array.from(trafficMap.values())
-        .sort((a,b) => b.value - a.value);
+    teamMap.forEach(m => {
+        if (m.activity.leads > 0) m.activity.conversionRate = Math.round((m.activity.contractsSigned / m.activity.leads) * 100);
+    });
 
     return {
         ...currentData,
@@ -735,8 +916,9 @@ const processMetrics = (currentData: DashboardData, dateFilter: DateFilterState,
         metrics: {
             totalRevenue,
             totalContracts,
-            totalCashFlow: totalRevenue, 
-            totalCommission: totalRevenue * 0.1,
+            totalCashFlow, 
+            totalMeetings,
+            totalCommission, 
             totalProposalValue 
         },
         charts: {

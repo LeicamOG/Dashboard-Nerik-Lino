@@ -18,7 +18,9 @@ import {
   Columns,
   TrendingUp,
   UserPlus,
-  FileText
+  FileText,
+  CalendarCheck,
+  Medal
 } from 'lucide-react';
 import { 
   ComposedChart, 
@@ -39,9 +41,10 @@ import {
 } from 'recharts';
 
 import { MOCK_DASHBOARD_DATA } from './constants';
-import { DashboardData, DateFilterState, GoalSettings } from './types';
+import { DashboardData, DateFilterState, GoalSettings, TeamRole } from './types';
 import { Card } from './components/Card';
 import { TeamRow } from './components/TeamRow';
+import { TeamRanking } from './components/TeamRanking';
 import { DateFilter } from './components/DateFilter';
 import { PipelineFunnel } from './components/PipelineFunnel';
 import { KanbanBoard } from './components/KanbanBoard';
@@ -49,7 +52,7 @@ import { CreativeRanking } from './components/CreativeRanking';
 import { GoalConfigModal } from './components/GoalConfigModal';
 import { fetchConversAppData } from './services/api';
 
-type ViewMode = 'overview' | 'goals';
+type ViewMode = 'overview' | 'goals' | 'ranking';
 type PipelineViewMode = 'list' | 'kanban';
 
 function App() {
@@ -60,48 +63,36 @@ function App() {
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   
-  // Date Filter State - Initialized to 'month' for better initial context
+  // Date Filter State
   const [dateFilter, setDateFilter] = useState<DateFilterState>(() => {
     return {
-      preset: 'month', // Changed default to month for better chart viz
+      preset: 'month', 
       startDate: '',
       endDate: ''
     };
   });
 
-  // Função isolada para recarregar dados
   const loadData = async () => {
     try {
-      // Força loading visual se for chamado manualmente
       setLoading(true);
       setApiError(null);
       
       let currentData = MOCK_DASHBOARD_DATA;
-      // if (window.dashboardData) {
-      //     currentData = window.dashboardData;
-      // }
-
-      // Passamos o filtro de data atual para a API
       const realData = await fetchConversAppData(currentData, dateFilter);
       
       setData(realData);
     } catch (e: any) {
       console.error("Failed to load data", e);
-      // Mostra a mensagem de erro real para facilitar o debug
-      const errorMessage = e instanceof Error ? e.message : (typeof e === 'string' ? e : "Erro desconhecido na conexão com API");
+      const errorMessage = e instanceof Error ? e.message : "Erro desconhecido";
       setApiError(errorMessage);
     } finally {
       setLoading(false);
     }
   };
 
-  // Efeito principal de carga
   useEffect(() => {
     loadData();
-
-    // Configurar Polling (Atualização automática a cada 5 minutos)
     const intervalId = setInterval(() => {
-        // Executa sem setar loading global para não piscar
         fetchConversAppData(data, dateFilter)
             .then(newData => {
                 setData(newData);
@@ -113,7 +104,7 @@ function App() {
     return () => {
         clearInterval(intervalId);
     };
-  }, [dateFilter]); // Recarrega sempre que o filtro muda
+  }, [dateFilter]);
 
   const handleUpdateGoals = (newGoals: GoalSettings) => {
     setData(prev => ({
@@ -122,7 +113,13 @@ function App() {
     }));
   };
 
-  // Loading inicial apenas se não houver dados
+  const handleRoleUpdate = (memberId: string, newRole: TeamRole) => {
+    setData(prev => ({
+      ...prev,
+      team: prev.team.map(m => m.id === memberId ? { ...m, role: newRole } : m)
+    }));
+  };
+
   if (loading && !data && !apiError) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
@@ -139,7 +136,11 @@ function App() {
   const cashFlowProgress = (data.metrics.totalCashFlow / data.currentGoals.cashFlowTarget) * 100;
   const remainingContracts = Math.max(0, data.currentGoals.contractsTarget - data.metrics.totalContracts);
 
-  // Custom Tooltip for Charts
+  // Formatting Date Deadline
+  const deadlineDisplay = data.currentGoals.deadline 
+    ? new Date(data.currentGoals.deadline).toLocaleDateString('pt-BR') 
+    : 'Não definido';
+
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       const dataPoint = payload[0].payload;
@@ -158,7 +159,6 @@ function App() {
             </p>
           ))}
 
-          {/* Interactive Breakdown */}
           {hasBreakdown && (
               <div className="mt-3 pt-2 border-t border-neutral-800">
                   <p className="text-[10px] text-gray-500 uppercase font-bold mb-1">Vendas do Dia:</p>
@@ -234,24 +234,30 @@ function App() {
           
           <div className="flex flex-col md:flex-row gap-4 w-full md:w-auto items-center justify-center">
              {/* View Switcher */}
-            <div className="bg-neutral-900 p-1 rounded-lg border border-neutral-800 flex w-full md:w-auto">
+            <div className="bg-neutral-900 p-1 rounded-lg border border-neutral-800 flex w-full md:w-auto overflow-x-auto">
               <button 
                 onClick={() => setViewMode('overview')}
-                className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-1.5 rounded text-xs font-medium transition-all ${viewMode === 'overview' ? 'bg-gold-500 text-black shadow-lg shadow-gold-500/20' : 'text-gray-400 hover:text-white'}`}
+                className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-1.5 rounded text-xs font-medium transition-all whitespace-nowrap ${viewMode === 'overview' ? 'bg-gold-500 text-black shadow-lg shadow-gold-500/20' : 'text-gray-400 hover:text-white'}`}
               >
                 <LayoutDashboard size={14} />
                 Visão Geral
               </button>
               <button 
                 onClick={() => setViewMode('goals')}
-                className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-1.5 rounded text-xs font-medium transition-all ${viewMode === 'goals' ? 'bg-gold-500 text-black shadow-lg shadow-gold-500/20' : 'text-gray-400 hover:text-white'}`}
+                className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-1.5 rounded text-xs font-medium transition-all whitespace-nowrap ${viewMode === 'goals' ? 'bg-gold-500 text-black shadow-lg shadow-gold-500/20' : 'text-gray-400 hover:text-white'}`}
               >
                 <Users size={14} />
                 Equipe
               </button>
+               <button 
+                onClick={() => setViewMode('ranking')}
+                className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-1.5 rounded text-xs font-medium transition-all whitespace-nowrap ${viewMode === 'ranking' ? 'bg-gold-500 text-black shadow-lg shadow-gold-500/20' : 'text-gray-400 hover:text-white'}`}
+              >
+                <Medal size={14} />
+                Ranking
+              </button>
             </div>
             
-            {/* Manual Refresh Button */}
             <button 
               onClick={() => loadData()}
               disabled={loading}
@@ -306,7 +312,14 @@ function App() {
                     </div>
                     <div>
                         <h2 className="text-sm font-bold text-white uppercase tracking-wider">Metas e Performance</h2>
-                        <span className="text-[10px] text-gray-500">Acompanhamento de objetivos</span>
+                        <div className="flex items-center gap-2">
+                             <span className="text-[10px] text-gray-500">Acompanhamento de objetivos</span>
+                             {data.currentGoals.deadline && (
+                                 <span className="text-[9px] bg-red-900/30 text-red-400 px-1.5 rounded border border-red-900/50">
+                                     Prazo: {deadlineDisplay}
+                                 </span>
+                             )}
+                        </div>
                     </div>
                 </div>
                 <button 
@@ -314,14 +327,34 @@ function App() {
                     className="flex items-center gap-2 px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 rounded text-xs text-gold-500 hover:text-gold-400 transition-all"
                 >
                     <Pencil size={12} />
-                    Editar Metas
+                    Editar
                 </button>
             </div>
 
             {/* Row 1: KPI Cards with Goal Context */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4 animate-fadeIn">
               
-              {/* KPI 1: Contratos Fechados */}
+               {/* KPI 1: Reuniões Realizadas */}
+              <Card className="relative overflow-hidden group hover:border-gold-500/30 transition-colors">
+                 <div className="flex justify-between items-start mb-2">
+                    <div>
+                        <p className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold">Reuniões Realizadas</p>
+                        <h3 className="text-3xl font-bold text-white mt-1">{data.metrics.totalMeetings}</h3>
+                    </div>
+                    <div className="p-2 bg-neutral-800 rounded-lg text-gold-500">
+                        <CalendarCheck size={20} />
+                    </div>
+                 </div>
+                 
+                 <div className="mt-4">
+                     <p className="text-[10px] text-gray-600">Baseado em Data da Reunião</p>
+                    <div className="w-full h-1 bg-neutral-800 rounded-full overflow-hidden mt-2">
+                         <div className="h-full bg-gold-500 w-full opacity-50"></div>
+                    </div>
+                 </div>
+              </Card>
+
+              {/* KPI 2: Contratos Fechados */}
               <Card className="relative overflow-hidden group">
                  <div className="flex justify-between items-start mb-2">
                     <div>
@@ -344,7 +377,7 @@ function App() {
                  </div>
               </Card>
 
-              {/* KPI 2: Faturamento (Honorários) */}
+              {/* KPI 3: Faturamento (Honorários) */}
               <Card className="relative overflow-hidden group">
                  <div className="flex justify-between items-start mb-2">
                     <div>
@@ -369,7 +402,7 @@ function App() {
                  </div>
               </Card>
 
-              {/* KPI 3: Entradas (Caixa) */}
+              {/* KPI 4: Entradas (Caixa) */}
               <Card className="relative overflow-hidden group">
                  <div className="flex justify-between items-start mb-2">
                     <div>
@@ -393,26 +426,6 @@ function App() {
                  </div>
               </Card>
 
-              {/* KPI 4: Valores em Aberto (Propostas) */}
-               <Card className="relative overflow-hidden group bg-neutral-900/50 border-neutral-700">
-                 <div className="flex justify-between items-start mb-2">
-                    <div>
-                        <p className="text-[10px] text-gray-400 uppercase tracking-widest font-semibold">Em Negociação</p>
-                        <h3 className="text-2xl font-bold text-gray-200 mt-1">
-                             {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(data.metrics.totalProposalValue)}
-                        </h3>
-                    </div>
-                    <div className="p-2 bg-neutral-800 rounded-lg text-gray-400 group-hover:text-white transition-colors">
-                        <FileText size={20} />
-                    </div>
-                 </div>
-                 <div className="mt-auto pt-4">
-                    <p className="text-[10px] text-gray-500">Propostas e Orçamentos enviados.</p>
-                 </div>
-                 {/* Decorative Line */}
-                 <div className="absolute bottom-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-gray-500/30 to-transparent" />
-              </Card>
-
               {/* KPI 5: Comissões (Cost) */}
                <Card className="relative overflow-hidden group lg:hidden xl:block">
                  <div className="flex justify-between items-start mb-2">
@@ -427,7 +440,7 @@ function App() {
                     </div>
                  </div>
                  <div className="mt-auto pt-4">
-                    <p className="text-[10px] text-gray-500">Baseado em 10%.</p>
+                    <p className="text-[10px] text-gray-500">SDR: 3% | Closer: 5% (Entrada)</p>
                  </div>
               </Card>
             </div>
@@ -453,9 +466,9 @@ function App() {
                         tickLine={false}
                         tickFormatter={(val) => `R$${val/1000}k`}
                       />
-                      <Tooltip content={<CustomTooltip />} cursor={{fill: 'transparent'}} />
-                      <Bar dataKey="realizado" name="Realizado" fill="#C59D5F" radius={[4, 4, 0, 0]} barSize={20} />
-                      <Line type="monotone" dataKey="meta" name="Meta Diária" stroke="#404040" strokeDasharray="5 5" dot={false} strokeWidth={2} />
+                      <Tooltip content={<CustomTooltip />} cursor={{fill: 'transparent'}} isAnimationActive={false} />
+                      <Bar dataKey="realizado" name="Realizado" fill="#C59D5F" radius={[4, 4, 0, 0]} barSize={20} isAnimationActive={false} />
+                      <Line type="monotone" dataKey="meta" name="Meta Diária" stroke="#404040" strokeDasharray="5 5" dot={false} strokeWidth={2} isAnimationActive={false} />
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
@@ -491,7 +504,16 @@ function App() {
                         isAnimationActive={false} 
                         cursor={{ stroke: '#C59D5F', strokeWidth: 1 }} 
                       />
-                      <Area type="monotone" dataKey="count" name="Novos Leads" stroke="#C59D5F" fillOpacity={1} fill="url(#colorLeads)" activeDot={{ r: 6 }} />
+                      <Area 
+                        type="monotone" 
+                        dataKey="count" 
+                        name="Novos Leads" 
+                        stroke="#C59D5F" 
+                        fillOpacity={1} 
+                        fill="url(#colorLeads)" 
+                        activeDot={{ r: 6 }} 
+                        isAnimationActive={false} 
+                      />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
@@ -513,8 +535,8 @@ function App() {
                         tick={{fill: '#999', fontSize: 10}} 
                         width={100}
                       />
-                      <Tooltip content={<ServiceTooltip />} cursor={{fill: '#ffffff10'}} />
-                      <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={20}>
+                      <Tooltip content={<ServiceTooltip />} cursor={{fill: '#ffffff10'}} isAnimationActive={false} />
+                      <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={20} isAnimationActive={false}>
                         {data.charts.services.map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={entry.color} />
                         ))}
@@ -577,10 +599,20 @@ function App() {
                     <div className="md:col-span-3 text-right">Financeiro</div>
                 </div>
               {data.team.map((member) => (
-                <TeamRow key={member.id} member={member} detailed={true} />
+                <TeamRow 
+                    key={member.id} 
+                    member={member} 
+                    detailed={true} 
+                    onRoleUpdate={handleRoleUpdate}
+                />
               ))}
             </div>
           </Card>
+        )}
+
+        {/* VIEW: RANKING */}
+        {viewMode === 'ranking' && (
+            <TeamRanking members={data.team} />
         )}
       </main>
     </div>
